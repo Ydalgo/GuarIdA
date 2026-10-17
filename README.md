@@ -17,8 +17,8 @@ El momento actual en el que se encuentra la Primera fase.
 
 ## 🧠 Stack actual (Fase 1 cerrada)
 - **Backend de inferencia:** `llama-server` con Vulkan (build `b11707`), servicio systemd de usuario en el puerto `8083`.
-- ***Se han estando comparando ollama, lmstudio, koboldcpp, y aunque koboldcpp dió un excelente resultado en contexto largo era más lento.
-- **Modelo:** `Qwen2.5-Coder-32k` (GGUF, cuantización Q4).
+- ***Se han estando comparando ollama, lmstudio (en el proyecto del que nació KoboldCpp), koboldcpp, y aunque KoboldCpp dio un excelente resultado en casos cortos, se quedó atrás en contexto largo.
+- **Modelo:** `Qwen2.5-Coder-7B (contexto 32k)` (GGUF, cuantización Q4).
 - ***Se selecciona este porque es el más adecuado para el Hardware con el que inicializo el proyecto.
 - **Contexto:** 16 384 tokens. **Atención:** el GTT de la APU está al ~93 % con esta configuración; no se sube a 32k sin reducir `--n-gpu-layers` o el KV cache.
 - **KoboldCpp** (puerto `5001`) se mantiene solo como referencia, no como backend del stack.
