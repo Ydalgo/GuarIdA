@@ -16,7 +16,7 @@
 - [Primer enfoque: programación](#primer-enfoque-programación)
 - [Estado actual: Fase 1 cerrada](#estado-actual-fase-1-cerrada)
 - [Hoja de ruta](#hoja-de-ruta)
-- [Instalación (entorno de desarrollo)](#instalación-entorno-de-desarrollo)
+- [Instalación y Uso (Entorno de desarrollo)](#instalación-y-uso-entorno-de-desarrollo)
 - [Licencia](#licencia)
 - [Créditos y Agradecimientos](#créditos-y-agradecimientos)
 
@@ -90,13 +90,48 @@ El argumento de fondo no es solo el rendimiento: `llama-server` es el binario of
 - [ ] **Fase 4:** aislamiento del sistema (Landlock/bubblewrap en Linux; usuario sin permiso de escritura en Windows).
 - [ ] **Fase 1.5 (opcional, condicionada al arnés):** optimización fina del backend (KV cache `q4_0`, batch size, samplers, concurrencia).
 
-## Instalación (entorno de desarrollo)
+## Instalación y Uso (Entorno de desarrollo)
+
+### 1. Clonar el repositorio y requisitos
+Se requiere Python 3.10 o superior y la librería `psutil`.
 
 ```bash
 git clone git@github.com:Ydalgo/GuarIdA.git
 cd GuarIdA
-# Pendiente: pyproject.toml, entorno virtual, dependencias
+pip install psutil
 ```
+
+### 2. Menú de Inicio Interactivo
+Para acceder al panel interactivo de terminal y gestionar diagnósticos, caché y pruebas:
+
+```bash
+python main.py
+# O también mediante el módulo del paquete:
+python -m guarida_manager
+```
+
+### 3. Comandos directos por submódulo
+Si prefieres ejecutar una función específica sin pasar por el menú interactivo:
+
+- **Diagnóstico del Hardware (CPU, RAM, GPU, hash SHA-256):**
+  ```bash
+  python -m guarida_manager.hardware
+  ```
+
+- **Prueba de Asignación y Estrés Real de Memoria (GPU VRAM + RAM):**
+  ```bash
+  python -m guarida_manager.memory_probe
+  ```
+
+- **Estado de Caché y Base de Datos (SQLite local):**
+  ```bash
+  python -m guarida_manager.cache
+  ```
+
+- **Ejecutar Suite de Pruebas Unitarias:**
+  ```bash
+  python -m unittest discover tests
+  ```
 
 ## Licencia
 

@@ -2,6 +2,8 @@ import unittest
 
 from guarida_manager.hardware import (
     calcular_hash_hardware,
+    calcular_limites_memoria_gpu,
+    clasificar_tipo_gpu,
     convertir_cadena_memoria_a_megabytes,
     obtener_informacion_hardware,
     obtener_memoria_ram_total,
@@ -76,6 +78,46 @@ class TestHardware(unittest.TestCase):
         self.assertNotEqual(hash_1, hash_distinto_gpu)
         self.assertEqual(len(hash_1), 64)
 
+    def test_clasificar_tipo_gpu(self):
+        tipo_iris, es_integ_iris = clasificar_tipo_gpu("Intel(R) Iris(R) Xe Graphics", 0.12)
+        self.assertEqual(tipo_iris, "Integrada / APU")
+        self.assertTrue(es_integ_iris)
+
+        tipo_rtx, es_integ_rtx = clasificar_tipo_gpu("NVIDIA GeForce RTX 4070", 12.0)
+        self.assertEqual(tipo_rtx, "Dedicada")
+        self.assertFalse(es_integ_rtx)
+
+        tipo_radeon_apu, es_integ_radeon = clasificar_tipo_gpu("AMD Radeon 780M Graphics", 0.5)
+        self.assertEqual(tipo_radeon_apu, "Integrada / APU")
+        self.assertTrue(es_integ_radeon)
+
+    def test_calcular_limites_memoria_gpu_integrada(self):
+        # Sistema con 32 GB de RAM y APU (ej. 15.82 GB compartida WDDM)
+        lim_seguro, lim_extremo, reserva = calcular_limites_memoria_gpu(
+            vram_dedicada_gb=0.12,
+            memoria_compartida_gb=15.82,
+            ram_total_gb=32.0,
+            es_integrada=True,
+            sistema="Windows",
+        )
+        self.assertEqual(reserva, 3.5)
+        self.assertEqual(lim_seguro, round(15.82 * 0.85, 2))
+        # En extremo: 32.0 - 3.5 = 28.5 GB forzables
+        self.assertEqual(lim_extremo, 28.5)
+
+    def test_calcular_limites_memoria_gpu_dedicada(self):
+        # GPU Dedicada de 16 GB VRAM
+        lim_seguro, lim_extremo, reserva = calcular_limites_memoria_gpu(
+            vram_dedicada_gb=16.0,
+            memoria_compartida_gb=16.0,
+            ram_total_gb=32.0,
+            es_integrada=False,
+            sistema="Linux",
+        )
+        self.assertEqual(reserva, 1.8)
+        self.assertEqual(lim_seguro, 13.6)  # 85% de 16
+        self.assertEqual(lim_extremo, 15.5)  # 16.0 - 0.5 GB para display
+
     def test_obtener_informacion_hardware_sistema_actual(self):
         info = obtener_informacion_hardware()
         self.assertGreater(len(info.modelo_cpu), 0)
@@ -83,6 +125,8 @@ class TestHardware(unittest.TestCase):
         self.assertGreater(info.ram_total_bytes, 0)
         self.assertGreater(info.ram_total_gb, 0.0)
         self.assertEqual(len(info.hash_hardware), 64)
+        self.assertGreater(info.memoria_extrema_forzable_gb, 0.0)
+        self.assertGreater(info.reserva_sistema_gb, 0.0)
 
 
 if __name__ == "__main__":
