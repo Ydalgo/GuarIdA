@@ -18,6 +18,7 @@
 - [Hoja de ruta](#hoja-de-ruta)
 - [Instalación (entorno de desarrollo)](#instalación-entorno-de-desarrollo)
 - [Licencia](#licencia)
+- [Créditos y Agradecimientos](#créditos-y-agradecimientos)
 
 ---
 
@@ -102,3 +103,13 @@ cd GuarIdA
 GuarIdA se distribuye bajo **GNU General Public License v3.0 (GPL-3.0)**. Es una licencia *copyleft*: cualquier derivado distribuido debe mantener la misma licencia y publicar su código fuente. El proyecto es y será siempre OpenSource; quien lo siga no puede cerrarlo.
 
 Consulta [LICENSE](LICENSE) para el texto completo.
+
+---
+
+## Créditos y Agradecimientos
+
+Este proyecto se construye y evoluciona mediante desarrollo asistido en colaboración con modelos de Inteligencia Artificial que han aportado en distintas etapas:
+
+- **DeepSeek:** Por su valiosa colaboración en los inicios del proyecto, ayudando a plantear los primeros experimentos y la conceptualización de la inferencia local offline.
+- **Claude:** Por su apoyo fundamental en la definición de la arquitectura, el enfoque de seguridad desacoplado del modelo y la estructuración del diseño general.
+- **Gemini:** Por la ingeniería de software y el desarrollo técnico activo de la Fase 1 (detección de hardware nativo, persistencia en SQLite, gestión de binarios y construcción del entorno).
