@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 
 from guarida_manager.cache import GestorCache
+from guarida_manager.downloader.compliance import GestorCumplimientoNormativo, RegionNormativa
+from guarida_manager.downloader.models import CatalogoModelos
+from guarida_manager.downloader.provisioning import OrquestadorAprovisionamiento
 from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.memory_probe import ejecutar_prueba_estres_memoria
 
@@ -90,6 +93,41 @@ def opcion_tests() -> None:
     print()
 
 
+def opcion_catalogo_y_bunker() -> None:
+    print("\n--- [5] CATÁLOGO DE MODELOS Y GOBERNANZA REGIONAL (EU AI ACT) ---")
+    print("Región activa: España / Unión Europea (Reglamento UE 2024/1689)\n")
+
+    modelos = CatalogoModelos.listar_modelos(region=RegionNormativa.ES_EU)
+    print("Modelos Disponibles y Auditoría Legal:")
+    print("-" * 75)
+    for idx, (m, ev) in enumerate(modelos, 1):
+        estado_tag = "[CONFORME]" if ev.estado.value == "CONFORME" else "[REVISION]"
+        print(f"[{idx}] {m.id} ({m.categoria.upper()}) - {m.tamano_gb:.2f} GB")
+        print(f"    Descripción:   {m.descripcion}")
+        print(f"    RAM Rec.:      {m.ram_recomendada_gb:.1f} GB | Licencia: {m.licencia}")
+        print(f"    {estado_tag} Estado Legal: {ev.estado.value} | {ev.resumen_legal}")
+        print(f"    Transparencia: {ev.detalles_transparencia}")
+        print()
+    print("-" * 75)
+    print("Opciones:")
+    print("  1. Iniciar Aprovisionamiento Completo del Búnker (One-Shot Offline Setup)")
+    print("  0. Volver al menú principal")
+    
+    sub = input("\nElige una opción [0-1]: ").strip()
+    if sub == "1":
+        print("\nIniciando asistente de aprovisionamiento único...")
+        orquestador = OrquestadorAprovisionamiento()
+        cfg = orquestador.ejecutar_aprovisionamiento(
+            region=RegionNormativa.ES_EU,
+            interfaz="terminal",
+            instalar_pdf=True,
+            modelo_coder_id="qwen2.5-coder-7b-q4",
+            modelo_embedding_id="nomic-embed-text-v1.5",
+        )
+        print(f"\n[OK] Búnker configurado en modo: {cfg.estado_bunker}")
+    print()
+
+
 def iniciar_menu() -> None:
     while True:
         mostrar_banner()
@@ -98,7 +136,7 @@ def iniciar_menu() -> None:
         print("  2. Test de Asignación y Estrés Real de Memoria (GPU VRAM + RAM)")
         print("  3. Consultar Base de Datos y Caché Local")
         print("  4. Ejecutar Pruebas Unitarias del Sistema (Tests)")
-        print("  5. Descargar Modelo (Próximamente - Fase 1)")
+        print("  5. Catálogo de Modelos y Aprovisionamiento del Búnker")
         print("  0. Salir")
         print("-" * 50)
         
@@ -121,8 +159,7 @@ def iniciar_menu() -> None:
             opcion_tests()
             input("Presiona [Enter] para volver al menú...")
         elif opcion == "5":
-            print("\n[INFO] El módulo de descarga directa de modelos GGUF desde Hugging Face")
-            print("está planificado para completarse en la siguiente etapa de la Fase 1.\n")
+            opcion_catalogo_y_bunker()
             input("Presiona [Enter] para volver al menú...")
         elif opcion == "0":
             print("\nCerrando GuarIdA. ¡Hasta pronto!\n")

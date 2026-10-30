@@ -128,10 +128,36 @@ Si prefieres ejecutar una función específica sin pasar por el menú interactiv
   python -m guarida_manager.cache
   ```
 
+- **Catálogo de Modelos y Auditoría Legal (EU AI Act):**
+  ```bash
+  python -m guarida_manager.downloader.models
+  ```
+
+- **Aprovisionamiento Único del Búnker (Setup 100% Offline):**
+  ```bash
+  python -m guarida_manager.downloader.provisioning
+  ```
+
 - **Ejecutar Suite de Pruebas Unitarias:**
   ```bash
   python -m unittest discover tests
   ```
+
+### 4. Gobernanza y Cumplimiento Normativo (EU AI Act)
+GuarIdA incorpora un motor de auditoría legal automática para usuarios en **España y la Unión Europea** basado en el **Reglamento (UE) 2024/1689 (EU AI Act)**:
+- Verificación del resumen público del conjunto de datos de entrenamiento (Art. 53(1)(d)).
+- Respeto a las directivas de derechos de autor y reservas de minería de datos (Directiva UE 2019/790).
+- Compatibilidad de licencias de código abierto (Apache-2.0, MIT).
+
+### 5. Criptografía Preparada para la Era Postcuántica (PQC-Ready)
+El almacenamiento local, la configuración y el estado del búnker se protegen mediante primitivas resistentes a la computación cuántica:
+- Derivación de claves basada en la función esponja **SHAKE-256** (FIPS 202) y **SHA3-512** (256 bits de seguridad cuántica simétrica).
+- Cifrado simétrico autenticado (*Encrypt-then-MAC*) para evitar ataques de manipulación o extracción futura (*harvest now, decrypt later*).
+
+### 6. Decisiones de Arquitectura (ADRs)
+- [ADR 0001: Arquitectura Base y Gestor de Inferencia Local](docs/adr/0001-arquitectura-base-fase-1.md)
+- [ADR 0002: Verificación Empírica y Prueba de Estrés de Memoria GPU/GTT](docs/adr/0002-verificacion-empirica-memoria-gpu.md)
+- [ADR 0003: Aprovisionamiento Único Offline, Gobernanza Regional y Seguridad Postcuántica](docs/adr/0003-aprovisionamiento-offline-gobernanza-postcuantica.md)
 
 ## Licencia
 
