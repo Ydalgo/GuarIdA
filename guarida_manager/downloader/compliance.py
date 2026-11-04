@@ -11,6 +11,7 @@ class RegionNormativa(str, Enum):
 class EstadoCumplimiento(str, Enum):
     CONFORME = "CONFORME"
     REQUIERE_REVISION = "REQUIERE_REVISION"
+    EXPERIMENTAL_SIN_CENSURA = "EXPERIMENTAL_SIN_CENSURA"
     NO_CONFORME = "NO_CONFORME"
 
 
@@ -24,17 +25,17 @@ class EvaluacionCumplimiento:
     detalles_transparencia: str
     detalles_copyright: str
     licencia: str
+    permite_descarga: bool = True  # Siempre True: la gobernanza es informativa, nunca un bloqueo total
 
 
 class GestorCumplimientoNormativo:
     """Evalúa el cumplimiento de modelos de IA con respecto al marco legal de la región del usuario.
 
-    En la Unión Europea (y específicamente España), se aplica el Reglamento de Inteligencia
-    Artificial de la UE (EU AI Act - Reglamento 2024/1689), en particular las obligaciones para
-    proveedores de Modelos de IA de Uso General (GPAI):
-      - Art. 53(1)(c): Cumplimiento de la legislación sobre derechos de autor (Directiva UE 2019/790).
-      - Art. 53(1)(d): Publicación de un resumen suficientemente detallado de los contenidos usados para el entrenamiento.
-      - Compatibilidad de licencias de código abierto / uso comercial.
+    Enfoque de GuarIdA:
+      - La auditoría legal es rigurosa pero INFORMATIVA. Nunca bloquea arbitrariamente la libertad
+        del usuario de descargar modelos experimentales, variantes sin censura (abliterated)
+        o pesos personalizados en su propio hardware privado.
+      - Advierte claramente de las implicaciones según el Reglamento (UE) 2024/1689 (EU AI Act).
     """
 
     LICENCIAS_PERMISIVAS_AUDITABLES = {
@@ -53,9 +54,26 @@ class GestorCumplimientoNormativo:
         licencia: Optional[str],
         training_summary_url: Optional[str],
         copyright_compliant: bool = True,
+        es_sin_censura: bool = False,
         region: RegionNormativa = RegionNormativa.ES_EU,
     ) -> EvaluacionCumplimiento:
         licencia_norm = (licencia or "desconocida").strip().lower()
+
+        if es_sin_censura:
+            return EvaluacionCumplimiento(
+                region=region,
+                estado=EstadoCumplimiento.EXPERIMENTAL_SIN_CENSURA,
+                es_apto_para_uso=True,
+                resumen_legal=(
+                    "Modelo desalineado o sin censura (Abliterated / Uncensored). No apto para despliegues "
+                    "públicos regulados bajo el EU AI Act, pero permitido para investigación privada en búnker local."
+                ),
+                normativa_aplicable="Exención de I+D y uso estrictamente personal/laboratorio",
+                detalles_transparencia="Pesos modificados para neutralizar filtros de alineación.",
+                detalles_copyright="Dependiente del modelo base de origen.",
+                licencia=licencia or "Modificación Comunitaria",
+                permite_descarga=True,
+            )
 
         if region == RegionNormativa.GLOBAL:
             return EvaluacionCumplimiento(
@@ -67,6 +85,7 @@ class GestorCumplimientoNormativo:
                 detalles_transparencia="No requerida bajo directivas regionales específicas",
                 detalles_copyright="Regido por la legislación de la jurisdicción local",
                 licencia=licencia or "No especificada",
+                permite_descarga=True,
             )
 
         # Evaluación para España / Unión Europea (EU AI Act)
@@ -77,52 +96,49 @@ class GestorCumplimientoNormativo:
 
         if tiene_resumen_publico and es_licencia_abierta and copyright_compliant:
             estado = EstadoCumplimiento.CONFORME
-            es_apto = True
             resumen = (
                 "Cumple con el EU AI Act: Licencia permisiva transparente y resumen de entrenamiento "
                 "público disponible para auditoría legal."
             )
         elif es_licencia_abierta and not tiene_resumen_publico:
             estado = EstadoCumplimiento.REQUIERE_REVISION
-            es_apto = True
             resumen = (
-                "Licencia de uso permisiva pero el dataset de entrenamiento no cuenta con ficha "
-                "técnica detallada pública (requiere verificación para uso corporativo regulado)."
+                "Licencia permisiva pero el dataset de entrenamiento no cuenta con ficha "
+                "técnica pública verificada (Art. 53(1)(d)). Permitido con advertencia."
             )
         elif not copyright_compliant:
             estado = EstadoCumplimiento.NO_CONFORME
-            es_apto = False
             resumen = (
-                "No conforme con el marco de propiedad intelectual de la UE: Posible vulneración "
-                "de directivas de derechos de autor en el dataset de origen."
+                "Alerta legal: No se garantiza la política de derechos de autor y minería de datos (TDM opt-out) "
+                "de la UE. El usuario asume la responsabilidad si se usa en producción."
             )
         else:
             estado = EstadoCumplimiento.REQUIERE_REVISION
-            es_apto = True
             resumen = (
-                f"Licencia '{licencia}' con restricciones específicas de uso o términos personalizados. "
-                "Se permite su ejecución en búnker local privado pero con supervisión."
+                f"Licencia '{licencia}' con restricciones comerciales o términos específicos. "
+                "Uso autorizado en búnker local privado."
             )
 
         detalles_transp = (
-            f"Ficha pública en: {training_summary_url}"
+            f"Ficha técnica en: {training_summary_url}"
             if tiene_resumen_publico
-            else "Falta URL verificada del resumen de entrenamiento de acuerdo con el Art. 53(1)(d)."
+            else "Sin URL pública de documentación de entrenamiento."
         )
 
         detalles_copy = (
-            "Cumple con la política de respeto a derechos de autor y minería de datos (TDM opt-out)."
+            "Cumple con directiva de derechos de autor europea."
             if copyright_compliant
-            else "Alerta: No se garantiza la exclusión de obras sujetas a reserva de derechos de autor."
+            else "Riesgo de derechos de autor: sin garantía de exclusión de datasets protegidos."
         )
 
         return EvaluacionCumplimiento(
             region=region,
             estado=estado,
-            es_apto_para_uso=es_apto,
+            es_apto_para_uso=True,
             resumen_legal=resumen,
             normativa_aplicable=normativa,
             detalles_transparencia=detalles_transp,
             detalles_copyright=detalles_copy,
             licencia=licencia or "No especificada",
+            permite_descarga=True,
         )

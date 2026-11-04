@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,26 +18,52 @@ from guarida_manager.downloader.compliance import (
 @dataclass(frozen=True)
 class DefinicionModeloCatalogo:
     id: str
-    categoria: str                 # "coder", "embedding", "general"
+    nombre_legible: str
+    categoria: str                 # "coder", "chat", "uncensored", "embedding", "general"
+    cuantizacion: str              # "Q5_K_M", "Q4_K_M", "Q3_K_M", "Q2_K", etc.
+    idiomas_destacados: str        # "es, en", "multilingüe", "código"
     repo_hf: str
     filename: str
     tamano_gb: float
     ram_minima_gb: float
     ram_recomendada_gb: float
     licencia: str
-    training_summary_url: str
+    training_summary_url: Optional[str]
     copyright_compliant: bool
+    es_sin_censura: bool
     descripcion: str
 
 
 class CatalogoModelos:
-    """Catálogo centralizado de modelos preconfigurados y auditados para GuarIdA."""
+    """Catálogo flexible y multirrol de modelos auditados y personalizables."""
 
     MODELOS: dict[str, DefinicionModeloCatalogo] = {
-        # --- MODELOS DE PROGRAMACIÓN (Fase 1: Agente Coder) ---
+        # =========================================================================
+        # 1. ROL CODER (PROGRAMACIÓN Y GENERACIÓN DE PARCHES)
+        # =========================================================================
+        "qwen2.5-coder-7b-q5": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-7b-q5",
+            nombre_legible="Qwen2.5-Coder 7B (Q5_K_M - Alta Fidelidad)",
+            categoria="coder",
+            cuantizacion="Q5_K_M",
+            idiomas_destacados="código, en, es",
+            repo_hf="Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            filename="qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            tamano_gb=5.40,
+            ram_minima_gb=10.0,
+            ram_recomendada_gb=16.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Máxima precisión sintáctica para generación de código complejo. Recomendado con >16 GB RAM.",
+        ),
         "qwen2.5-coder-7b-q4": DefinicionModeloCatalogo(
             id="qwen2.5-coder-7b-q4",
+            nombre_legible="Qwen2.5-Coder 7B (Q4_K_M - Estándar Equilibrado)",
             categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, en, es",
             repo_hf="Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
             filename="qwen2.5-coder-7b-instruct-q4_k_m.gguf",
             tamano_gb=4.68,
@@ -45,11 +72,32 @@ class CatalogoModelos:
             licencia="apache-2.0",
             training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct",
             copyright_compliant=True,
-            descripcion="Modelo insignia para programación. Soporta contexto 32k, tool calling estructurado y parches diff precisos.",
+            es_sin_censura=False,
+            descripcion="Estándar óptimo de inferencia local. Soporta 32k contexto y tool calling estructurado.",
+        ),
+        "qwen2.5-coder-7b-q3": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-7b-q3",
+            nombre_legible="Qwen2.5-Coder 7B (Q3_K_M - Ahorro de VRAM)",
+            categoria="coder",
+            cuantizacion="Q3_K_M",
+            idiomas_destacados="código, en, es",
+            repo_hf="Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            filename="qwen2.5-coder-7b-instruct-q3_k_m.gguf",
+            tamano_gb=3.74,
+            ram_minima_gb=6.5,
+            ram_recomendada_gb=12.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Reduce consumo de memoria para permitir contextos de 32k tokens en APUs de 16 GB.",
         ),
         "qwen2.5-coder-1.5b-q4": DefinicionModeloCatalogo(
             id="qwen2.5-coder-1.5b-q4",
+            nombre_legible="Qwen2.5-Coder 1.5B (Q4_K_M - Ultraligero)",
             categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, en, es",
             repo_hf="Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
             filename="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
             tamano_gb=1.10,
@@ -58,11 +106,15 @@ class CatalogoModelos:
             licencia="apache-2.0",
             training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct",
             copyright_compliant=True,
-            descripcion="Modelo ultraligero de programación de alto rendimiento para equipos de hardware muy modesto.",
+            es_sin_censura=False,
+            descripcion="Para PCs muy modestos o tareas de autocompletado rápido sin saturar la GPU.",
         ),
         "deepseek-coder-1.3b-q4": DefinicionModeloCatalogo(
             id="deepseek-coder-1.3b-q4",
+            nombre_legible="DeepSeek-Coder 1.3B (Q4_K_M)",
             categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, en",
             repo_hf="TheBloke/deepseek-coder-1.3b-instruct-GGUF",
             filename="deepseek-coder-1.3b-instruct.Q4_K_M.gguf",
             tamano_gb=0.87,
@@ -71,12 +123,95 @@ class CatalogoModelos:
             licencia="deepseek-license",
             training_summary_url="https://huggingface.co/deepseek-ai/deepseek-coder-1.3b-instruct",
             copyright_compliant=True,
-            descripcion="Modelo compacto optimizado para autocompletado y análisis sintáctico rápido de código.",
+            es_sin_censura=False,
+            descripcion="Modelo alternativo rápido para pruebas sintácticas unitarias.",
         ),
-        # --- MODELOS DE EMBEDDINGS (Árboles de nodos, bucles iterativos y memoria semántica) ---
+
+        # =========================================================================
+        # 2. ROL CHAT / CONVERSACIONAL (INTERFAZ HUMANA EN ESPAÑOL Y COORDINADOR)
+        # =========================================================================
+        "qwen2.5-3b-chat-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-3b-chat-q4",
+            nombre_legible="Qwen2.5 3B Chat (Q4_K_M - Coordinador Multilingüe)",
+            categoria="chat",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="es (nativo), en, multilingüe",
+            repo_hf="Qwen/Qwen2.5-3B-Instruct-GGUF",
+            filename="qwen2.5-3b-instruct-q4_k_m.gguf",
+            tamano_gb=2.00,
+            ram_minima_gb=4.5,
+            ram_recomendada_gb=8.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-3B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Ideal como agente conversacional con el usuario en español. Rápido, empático y traduce intenciones a JSON para el Coder.",
+        ),
+        "llama-3.2-3b-chat-q4": DefinicionModeloCatalogo(
+            id="llama-3.2-3b-chat-q4",
+            nombre_legible="Llama 3.2 3B Instruct (Q4_K_M)",
+            categoria="chat",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="es, en",
+            repo_hf="bartowski/Llama-3.2-3B-Instruct-GGUF",
+            filename="Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+            tamano_gb=2.02,
+            ram_minima_gb=4.5,
+            ram_recomendada_gb=8.0,
+            licencia="llama-3.2-license",
+            training_summary_url="https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo ligero de Meta con excelente razonamiento lógico y diálogo estructurado.",
+        ),
+
+        # =========================================================================
+        # 3. ROL SIN CENSURA / ABLITERATED (INVESTIGACIÓN Y CÓDIGO SIN FILTROS)
+        # =========================================================================
+        "qwen2.5-coder-7b-abliterated-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-7b-abliterated-q4",
+            nombre_legible="Qwen2.5-Coder 7B Abliterated (Sin Censura Q4)",
+            categoria="uncensored",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, en, es",
+            repo_hf="bartowski/Qwen2.5-Coder-7B-Instruct-abliterated-GGUF",
+            filename="Qwen2.5-Coder-7B-Instruct-abliterated-Q4_K_M.gguf",
+            tamano_gb=4.68,
+            ram_minima_gb=8.0,
+            ram_recomendada_gb=16.0,
+            licencia="comunitaria-abliterated",
+            training_summary_url=None,
+            copyright_compliant=True,
+            es_sin_censura=True,
+            descripcion="Filtros de alineación neutralizados. Permite auditar vulnerabilidades, payloads y análisis de seguridad sin bloqueos éticos.",
+        ),
+
+        # =========================================================================
+        # 4. ROL EMBEDDINGS (ÁRBOLES DE NODOS, GRAFOS AST Y MEMORIA SEMÁNTICA)
+        # =========================================================================
+        "bge-m3-q4": DefinicionModeloCatalogo(
+            id="bge-m3-q4",
+            nombre_legible="BGE-M3 (Multilingüe Español/Inglés/Código)",
+            categoria="embedding",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="es, en, código, 100+ idiomas",
+            repo_hf="CompendiumLabs/bge-m3-gguf",
+            filename="bge-m3-q4_k_m.gguf",
+            tamano_gb=0.35,
+            ram_minima_gb=1.5,
+            ram_recomendada_gb=3.0,
+            licencia="mit",
+            training_summary_url="https://huggingface.co/BAAI/bge-m3",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Estándar para indexación de árboles sintácticos y grafos de código con soporte nativo en español y 8192 contexto.",
+        ),
         "nomic-embed-text-v1.5": DefinicionModeloCatalogo(
             id="nomic-embed-text-v1.5",
+            nombre_legible="Nomic Embed Text v1.5 (Auditable)",
             categoria="embedding",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="en, código",
             repo_hf="nomic-ai/nomic-embed-text-v1.5-GGUF",
             filename="nomic-embed-text-v1.5.Q4_K_M.gguf",
             tamano_gb=0.15,
@@ -85,34 +220,8 @@ class CatalogoModelos:
             licencia="apache-2.0",
             training_summary_url="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5",
             copyright_compliant=True,
-            descripcion="Vectorizador de texto con contexto 8192. Indispensable para navegación de grafos AST y árboles de nodos.",
-        ),
-        "bge-small-en-v1.5": DefinicionModeloCatalogo(
-            id="bge-small-en-v1.5",
-            categoria="embedding",
-            repo_hf="CompendiumLabs/bge-small-en-v1.5-gguf",
-            filename="bge-small-en-v1.5-q4_k_m.gguf",
-            tamano_gb=0.05,
-            ram_minima_gb=0.5,
-            ram_recomendada_gb=1.0,
-            licencia="mit",
-            training_summary_url="https://huggingface.co/BAAI/bge-small-en-v1.5",
-            copyright_compliant=True,
-            descripcion="Embeddings ultracompactos (45 MB) para recuperación semántica veloz en bucles iterativos.",
-        ),
-        # --- MODELOS GENERALISTAS (Extensión futura) ---
-        "qwen2.5-7b-instruct-q4": DefinicionModeloCatalogo(
-            id="qwen2.5-7b-instruct-q4",
-            categoria="general",
-            repo_hf="Qwen/Qwen2.5-7B-Instruct-GGUF",
-            filename="qwen2.5-7b-instruct-q4_k_m.gguf",
-            tamano_gb=4.68,
-            ram_minima_gb=8.0,
-            ram_recomendada_gb=16.0,
-            licencia="apache-2.0",
-            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct",
-            copyright_compliant=True,
-            descripcion="Modelo conversacional y de razonamiento general para tareas no restringidas a código.",
+            es_sin_censura=False,
+            descripcion="Modelo compacto y auditable para recuperación semántica de funciones y variables.",
         ),
     }
 
@@ -122,7 +231,6 @@ class CatalogoModelos:
         categoria: Optional[str] = None,
         region: RegionNormativa = RegionNormativa.ES_EU,
     ) -> list[tuple[DefinicionModeloCatalogo, EvaluacionCumplimiento]]:
-        """Devuelve los modelos disponibles junto a su auditoría legal para la región."""
         resultados = []
         for mod in cls.MODELOS.values():
             if categoria and mod.categoria != categoria:
@@ -133,6 +241,7 @@ class CatalogoModelos:
                 licencia=mod.licencia,
                 training_summary_url=mod.training_summary_url,
                 copyright_compliant=mod.copyright_compliant,
+                es_sin_censura=mod.es_sin_censura,
                 region=region,
             )
             resultados.append((mod, evaluacion))
@@ -141,6 +250,62 @@ class CatalogoModelos:
     @classmethod
     def obtener_modelo(cls, modelo_id: str) -> Optional[DefinicionModeloCatalogo]:
         return cls.MODELOS.get(modelo_id)
+
+    @classmethod
+    def agregar_modelo_personalizado(
+        cls,
+        id_unico: str,
+        nombre_legible: str,
+        repo_hf: str,
+        filename: str,
+        tamano_gb: float,
+        categoria: str = "coder",
+        cuantizacion: str = "Q4_K_M",
+        idiomas: str = "es, en, código",
+        licencia: str = "custom",
+        training_summary_url: Optional[str] = None,
+        es_sin_censura: bool = False,
+        descripcion: str = "Modelo personalizado añadido por el usuario.",
+    ) -> DefinicionModeloCatalogo:
+        """Permite al usuario registrar cualquier modelo GGUF arbitrario de Hugging Face."""
+        nuevo = DefinicionModeloCatalogo(
+            id=id_unico,
+            nombre_legible=nombre_legible,
+            categoria=categoria,
+            cuantizacion=cuantizacion,
+            idiomas_destacados=idiomas,
+            repo_hf=repo_hf.strip(),
+            filename=filename.strip(),
+            tamano_gb=tamano_gb,
+            ram_minima_gb=round(tamano_gb * 1.5, 1),
+            ram_recomendada_gb=round(tamano_gb * 2.5, 1),
+            licencia=licencia,
+            training_summary_url=training_summary_url,
+            copyright_compliant=True,
+            es_sin_censura=es_sin_censura,
+            descripcion=descripcion,
+        )
+        cls.MODELOS[id_unico] = nuevo
+        return nuevo
+
+
+@dataclass
+class CestaDescarga:
+    """Cola de modelos seleccionados para ser descargados en lote durante la ventana de conexión."""
+
+    modelos: list[DefinicionModeloCatalogo]
+
+    @property
+    def tamano_total_gb(self) -> float:
+        return round(sum(m.tamano_gb for m in self.modelos), 2)
+
+    def verificar_espacio_disco(self, ruta_destino: Path) -> tuple[bool, float]:
+        """Comprueba si hay suficiente espacio libre en el disco de destino."""
+        total, usado, libre = shutil.disk_usage(ruta_destino)
+        libre_gb = libre / (1024**3)
+        # Margen de seguridad del 10%
+        suficiente = libre_gb >= (self.tamano_total_gb * 1.1)
+        return suficiente, round(libre_gb, 2)
 
 
 class DescargadorModelos:
@@ -166,9 +331,8 @@ class DescargadorModelos:
             else:
                 print(f"[{pct:.1f}%] {msg}")
 
-        # Comprobar si ya existe completo
         if ruta_archivo_final.exists() and ruta_archivo_final.stat().st_size > 0:
-            log(f"El modelo ya está presente en el almacenamiento local: {ruta_archivo_final}", 100.0)
+            log(f"El modelo ya está presente en el Búnker: {ruta_archivo_final.name}", 100.0)
             self._registrar_en_cache(modelo, str(ruta_archivo_final))
             return ruta_archivo_final
 
@@ -181,9 +345,9 @@ class DescargadorModelos:
         if bytes_existentes > 0:
             encabezados["Range"] = f"bytes={bytes_existentes}-"
             modo_apertura = "ab"
-            log(f"Reanudando descarga previa desde {bytes_existentes / (1024**2):.1f} MB...", 0.0)
+            log(f"Reanudando descarga de {modelo.filename} desde {bytes_existentes / (1024**2):.1f} MB...", 0.0)
         else:
-            log(f"Iniciando descarga de {modelo.filename} desde Hugging Face...", 0.0)
+            log(f"Iniciando descarga de {modelo.filename} ({modelo.tamano_gb:.2f} GB)...", 0.0)
 
         peticion = urllib.request.Request(url_hf, headers=encabezados)
 
@@ -193,7 +357,7 @@ class DescargadorModelos:
                 tamano_total = (int(longitud_contenido) + bytes_existentes) if longitud_contenido else None
 
                 descargado = bytes_existentes
-                chunk_size = 128 * 1024  # Chunks de 128 KB
+                chunk_size = 128 * 1024
                 sha256_hasher = hashlib.sha256()
 
                 with open(ruta_archivo_parcial, modo_apertura) as f_out:
@@ -211,27 +375,44 @@ class DescargadorModelos:
                                 f"Descargando: {descargado / (1024**3):.2f} GB / {tamano_total / (1024**3):.2f} GB",
                                 porcentaje,
                             )
-                        else:
-                            log(f"Descargando: {descargado / (1024**2):.1f} MB", 0.0)
 
-            # Mover a la ruta final
             if ruta_archivo_final.exists():
                 os.remove(ruta_archivo_final)
             ruta_archivo_parcial.rename(ruta_archivo_final)
 
-            log("Descarga completada e integrada en el Búnker.", 100.0)
+            log(f"Modelo {modelo.filename} verificado e integrado.", 100.0)
             self._registrar_en_cache(modelo, str(ruta_archivo_final))
             return ruta_archivo_final
 
         except Exception as e:
-            log(f"Error o interrupción durante la descarga: {e}", 0.0)
+            log(f"Interrupción en la descarga de {modelo.filename}: {e}", 0.0)
             raise
 
-    def archivar_modelo_sin_archivo(self, modelo_id: str) -> bool:
-        """Elimina el archivo .gguf para liberar espacio en disco manteniendo el registro en SQLite.
+    def descargar_cesta(
+        self,
+        cesta: CestaDescarga,
+        region: RegionNormativa = RegionNormativa.ES_EU,
+        callback_progreso: Optional[Callable[[str, float], None]] = None,
+    ) -> list[Path]:
+        """Descarga todos los modelos de la cesta informando del avance global."""
+        rutas_descargadas = []
+        total_modelos = len(cesta.modelos)
 
-        Conserva intactas las métricas de benchmarks, capas óptimas y motivos de descarte.
-        """
+        for i, mod in enumerate(cesta.modelos, 1):
+            if callback_progreso:
+                callback_progreso(f"\n[Lote {i}/{total_modelos}] Procesando {mod.nombre_legible}...", 0.0)
+
+            ruta = self.descargar_modelo(
+                modelo=mod,
+                region=region,
+                callback_progreso=callback_progreso,
+            )
+            rutas_descargadas.append(ruta)
+
+        return rutas_descargadas
+
+    def archivar_modelo_sin_archivo(self, modelo_id: str) -> bool:
+        """Elimina el archivo .gguf para liberar espacio en disco manteniendo el registro en SQLite."""
         modelo_dict = self.cache.obtener_modelo(modelo_id)
         if not modelo_dict:
             return False
@@ -243,12 +424,11 @@ class DescargadorModelos:
             except Exception:
                 pass
 
-        # Actualizar en la base de datos a estado 'archivado_sin_archivo' manteniendo sus métricas
         registro_actualizado = ModeloRegistro(
             id=modelo_dict["id"],
             repo_hf=modelo_dict["repo_hf"],
             filename=modelo_dict["filename"],
-            ruta_local="",  # Se vacía la ruta para reflejar que no ocupa disco
+            ruta_local="",
             estado="archivado_sin_archivo",
             motivo_descarte=modelo_dict.get("motivo_descarte"),
             license=modelo_dict.get("license"),

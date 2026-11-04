@@ -5,7 +5,11 @@ from pathlib import Path
 from guarida_manager.cache import GestorCache, ModeloRegistro
 from guarida_manager.downloader.binaries import GestorBinariosLlama
 from guarida_manager.downloader.compliance import RegionNormativa
-from guarida_manager.downloader.models import CatalogoModelos, DescargadorModelos
+from guarida_manager.downloader.models import (
+    CatalogoModelos,
+    CestaDescarga,
+    DescargadorModelos,
+)
 
 
 class TestDownloader(unittest.TestCase):
@@ -22,6 +26,44 @@ class TestDownloader(unittest.TestCase):
         nomic = CatalogoModelos.obtener_modelo("nomic-embed-text-v1.5")
         self.assertIsNotNone(nomic)
         self.assertEqual(nomic.categoria, "embedding")
+
+        # Verificar modelo conversacional para chat en español
+        chat_m = CatalogoModelos.obtener_modelo("qwen2.5-3b-chat-q4")
+        self.assertIsNotNone(chat_m)
+        self.assertEqual(chat_m.categoria, "chat")
+
+        # Verificar modelo sin censura
+        uncensored_m = CatalogoModelos.obtener_modelo("qwen2.5-coder-7b-abliterated-q4")
+        self.assertIsNotNone(uncensored_m)
+        self.assertTrue(uncensored_m.es_sin_censura)
+
+    def test_agregar_modelo_personalizado(self):
+        custom = CatalogoModelos.agregar_modelo_personalizado(
+            id_unico="custom-model-test",
+            nombre_legible="Custom Model Test",
+            repo_hf="user/test-repo",
+            filename="test-model-q4.gguf",
+            tamano_gb=3.5,
+            categoria="coder",
+        )
+        self.assertEqual(custom.id, "custom-model-test")
+        recuperado = CatalogoModelos.obtener_modelo("custom-model-test")
+        self.assertIsNotNone(recuperado)
+        self.assertEqual(recuperado.repo_hf, "user/test-repo")
+
+    def test_cesta_descarga(self):
+        m1 = CatalogoModelos.obtener_modelo("qwen2.5-coder-1.5b-q4")
+        m2 = CatalogoModelos.obtener_modelo("bge-m3-q4")
+        self.assertIsNotNone(m1)
+        self.assertIsNotNone(m2)
+
+        cesta = CestaDescarga(modelos=[m1, m2])
+        self.assertAlmostEqual(cesta.tamano_total_gb, m1.tamano_gb + m2.tamano_gb, places=2)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            suficiente, libre = cesta.verificar_espacio_disco(Path(tmp_dir))
+            self.assertIsInstance(suficiente, bool)
+            self.assertGreater(libre, 0.0)
 
     def test_resolver_perfil_binario_llama(self):
         perfil = GestorBinariosLlama.resolver_perfil_sistema()

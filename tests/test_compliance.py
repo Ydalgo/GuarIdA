@@ -43,5 +43,18 @@ class TestCompliance(unittest.TestCase):
         self.assertTrue(evaluacion.es_apto_para_uso)
 
 
+    def test_evaluacion_modelo_sin_censura(self):
+        evaluacion = GestorCumplimientoNormativo.evaluar_modelo(
+            modelo_id="modelo-abliterated",
+            licencia="comunitaria",
+            training_summary_url=None,
+            es_sin_censura=True,
+            region=RegionNormativa.ES_EU,
+        )
+        self.assertEqual(evaluacion.estado, EstadoCumplimiento.EXPERIMENTAL_SIN_CENSURA)
+        self.assertTrue(evaluacion.es_apto_para_uso)
+        self.assertTrue(evaluacion.permite_descarga)
+
+
 if __name__ == "__main__":
     unittest.main()

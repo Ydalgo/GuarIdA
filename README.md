@@ -133,6 +133,11 @@ Si prefieres ejecutar una función específica sin pasar por el menú interactiv
   python -m guarida_manager.downloader.models
   ```
 
+- **Comparador de Cuantizaciones y Memoria de Contexto:**
+  ```bash
+  python -m guarida_manager.comparator
+  ```
+
 - **Aprovisionamiento Único del Búnker (Setup 100% Offline):**
   ```bash
   python -m guarida_manager.downloader.provisioning
@@ -143,21 +148,30 @@ Si prefieres ejecutar una función específica sin pasar por el menú interactiv
   python -m unittest discover tests
   ```
 
-### 4. Gobernanza y Cumplimiento Normativo (EU AI Act)
+### 4. Arquitectura Multi-Rol Especializada
+Para maximizar la eficiencia de tokens y memoria de contexto, GuarIdA desacopla el agente en roles complementarios que se comunican mediante un protocolo estructurado en JSON:
+- **Rol Conversacional / Chat:** Fluido en español nativo (ej. Qwen2.5-3B), coordina con el usuario sin saturar de código la conversación.
+- **Rol Coder:** Especializado en sintaxis, parches diff y generación técnica de código (ej. Qwen2.5-Coder-7B en Q4 o Q3).
+- **Rol Embedding / Vectorial:** Indexación semántica y navegación de árboles sintácticos (AST) y bucles iterativos (ej. BGE-M3 con soporte en español o Nomic Embed).
+- **Rol Sin Censura / Desalineado (Opcional):** Modelos *abliterated* para auditoría de vulnerabilidades y ciberseguridad sin filtros restrictivos.
+
+### 5. Gobernanza y Cumplimiento Normativo (EU AI Act)
 GuarIdA incorpora un motor de auditoría legal automática para usuarios en **España y la Unión Europea** basado en el **Reglamento (UE) 2024/1689 (EU AI Act)**:
 - Verificación del resumen público del conjunto de datos de entrenamiento (Art. 53(1)(d)).
 - Respeto a las directivas de derechos de autor y reservas de minería de datos (Directiva UE 2019/790).
 - Compatibilidad de licencias de código abierto (Apache-2.0, MIT).
+- **Gobernanza informativa no bloqueante:** La auditoría guía y previene riesgos, pero el usuario mantiene la libertad de instalar modelos personalizados o desalineados en su entorno privado.
 
-### 5. Criptografía Preparada para la Era Postcuántica (PQC-Ready)
+### 6. Criptografía Preparada para la Era Postcuántica (PQC-Ready)
 El almacenamiento local, la configuración y el estado del búnker se protegen mediante primitivas resistentes a la computación cuántica:
 - Derivación de claves basada en la función esponja **SHAKE-256** (FIPS 202) y **SHA3-512** (256 bits de seguridad cuántica simétrica).
 - Cifrado simétrico autenticado (*Encrypt-then-MAC*) para evitar ataques de manipulación o extracción futura (*harvest now, decrypt later*).
 
-### 6. Decisiones de Arquitectura (ADRs)
+### 7. Decisiones de Arquitectura (ADRs)
 - [ADR 0001: Arquitectura Base y Gestor de Inferencia Local](docs/adr/0001-arquitectura-base-fase-1.md)
 - [ADR 0002: Verificación Empírica y Prueba de Estrés de Memoria GPU/GTT](docs/adr/0002-verificacion-empirica-memoria-gpu.md)
 - [ADR 0003: Aprovisionamiento Único Offline, Gobernanza Regional y Seguridad Postcuántica](docs/adr/0003-aprovisionamiento-offline-gobernanza-postcuantica.md)
+- [ADR 0004: Arquitectura Multi-Rol Especializada, Aprovisionamiento Flexible y Comparador de Cuantizaciones](docs/adr/0004-arquitectura-multi-rol-aprovisionamiento-flexible.md)
 
 ## Licencia
 
