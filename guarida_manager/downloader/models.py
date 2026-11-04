@@ -317,10 +317,14 @@ class CestaDescarga:
 class DescargadorModelos:
     """Descarga modelos GGUF con reanudación, cálculo de hash y registro inmutable en SQLite."""
 
-    def __init__(self, directorio_modelos: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        directorio_modelos: Optional[Path] = None,
+        gestor_cache: Optional[GestorCache] = None,
+    ) -> None:
         self.directorio_modelos = directorio_modelos or DIRECTORIO_MODELOS
         self.directorio_modelos.mkdir(parents=True, exist_ok=True)
-        self.cache = GestorCache()
+        self.cache = gestor_cache or GestorCache()
 
     def descargar_modelo(
         self,

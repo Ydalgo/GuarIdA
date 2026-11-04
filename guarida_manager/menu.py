@@ -5,6 +5,7 @@ from pathlib import Path
 
 from guarida_manager.cache import GestorCache
 from guarida_manager.comparator import ComparadorModelosHardware
+from guarida_manager.engine import ClienteLlamaOffline, GestorLlamaServer, LlamaServerConfig
 from guarida_manager.downloader.compliance import GestorCumplimientoNormativo, RegionNormativa
 from guarida_manager.downloader.models import (
     CatalogoModelos,
@@ -291,6 +292,155 @@ def opcion_catalogo_y_bunker() -> None:
             break
 
 
+GESTOR_SERVER = GestorLlamaServer()
+CLIENTE_LLAMA = ClienteLlamaOffline()
+
+
+def opcion_motor_inferencia() -> None:
+    while True:
+        limpiar_pantalla()
+        print("=" * 65)
+        print("    GUARIDA: MOTOR DE INFERENCIA LOCAL Y CONTROL DE PROCESOS")
+        print("=" * 65)
+        estado = GESTOR_SERVER.obtener_estado()
+        disponible = CLIENTE_LLAMA.esta_disponible(timeout=1.0)
+        
+        print(f"Estado Proceso Servidor:     {'[ACTIVO]' if estado['activo'] else '[DETENIDO]'}")
+        if estado["activo"]:
+            print(f"  * PID:                     {estado['pid']}")
+            print(f"  * Uptime:                  {estado['uptime_segundos']} s")
+            print(f"  * Endpoint:                http://{estado['host']}:{estado['port']}")
+            print(f"  * Modelo Cargado:          {estado['modelo']}")
+            print(f"  * Capas GPU (-ngl):        {estado['n_gpu_layers']} | Contexto (-c): {estado['ctx_size']}")
+        print(f"Conectividad HTTP Local:     {'[DISPONIBLE]' if disponible else '[NO RESPONDE]'}")
+        print("-" * 65)
+        print("Opciones del Motor:")
+        print("  1. Comprobar salud y respuesta del servidor (/health)")
+        print("  2. Arrancar llama-server con afinamiento optimo de SQLite")
+        print("  3. Detener llama-server")
+        print("  4. Consultar ranuras de contexto y memoria (/slots)")
+        print("  5. Probar tokenizador interactivo (/tokenize y /detokenize)")
+        print("  6. Test de generacion e inferencia local (/v1/chat/completions)")
+        print("  0. Volver al menu principal")
+        print("-" * 65)
+
+        try:
+            sub = input("Selecciona una opcion [0-6]: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+
+        if sub == "1":
+            print("\n--- SALUD DEL SERVIDOR LOCAL ---")
+            try:
+                salud = CLIENTE_LLAMA.obtener_salud(timeout=3.0)
+                print(f"[OK] Respuesta del endpoint /health: {salud}")
+            except Exception as e:
+                print(f"[!] No se pudo contactar con /health: {e}")
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "2":
+            print("\n--- ARRANCAR LLAMA-SERVER ---")
+            if GESTOR_SERVER.esta_activo():
+                print("[!] El servidor ya se encuentra en ejecucion.")
+            else:
+                binario = GestorHerramientasBunker.resolver_ruta_ejecutable("llama-server")
+                if not binario:
+                    print("[!] No se encontro el ejecutable 'llama-server'. Descargalo primero desde el menu de herramientas (opcion 5.3).")
+                else:
+                    with GestorCache().sesion() as conn:
+                        filas = conn.execute("SELECT id, filename, ruta_local FROM modelos WHERE ruta_local != '';").fetchall()
+                    if not filas:
+                        print("[!] No hay modelos descargados en la carpeta local. Descarga un modelo primero (opcion 5).")
+                    else:
+                        print("Modelos disponibles:")
+                        for idx, f in enumerate(filas, start=1):
+                            print(f"  [{idx}] {f['id']} -> {f['filename']}")
+                        sel = input("\nElige el numero del modelo a levantar: ").strip()
+                        try:
+                            num = int(sel)
+                            if 1 <= num <= len(filas):
+                                mod_sel = filas[num - 1]
+                                config = LlamaServerConfig.desde_afinamiento(
+                                    modelo_path=Path(mod_sel["ruta_local"]),
+                                    modelo_id=mod_sel["id"],
+                                    binario_path=binario,
+                                )
+                                print(f"Levantando '{mod_sel['id']}' con {config.n_gpu_layers} capas GPU y contexto de {config.ctx_size}...")
+                                res = GESTOR_SERVER.iniciar_servidor(config)
+                                print(f"[OK] Servidor iniciado con PID {res['pid']}. Esperando disponibilidad...")
+                            else:
+                                print("[!] Opcion fuera de rango.")
+                        except ValueError:
+                            print("[!] Entrada invalida.")
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "3":
+            print("\n--- DETENER LLAMA-SERVER ---")
+            if not GESTOR_SERVER.esta_activo():
+                print("El servidor no estaba en ejecucion.")
+            else:
+                if GESTOR_SERVER.detener_servidor():
+                    print("[OK] Servidor detenido correctamente.")
+                else:
+                    print("[!] Error al intentar detener el servidor.")
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "4":
+            print("\n--- RANURAS DE CONTEXTO Y ESTADO (/slots) ---")
+            try:
+                slots = CLIENTE_LLAMA.obtener_slots(timeout=3.0)
+                print(f"Total de ranuras reportadas: {len(slots)}")
+                for s in slots:
+                    print(f"  * Slot ID {s.get('id', '?')}: Estado: {s.get('state', '?')}, Contexto procesado: {s.get('n_past', 0)}")
+            except Exception as e:
+                print(f"[!] Error al consultar /slots: {e}")
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "5":
+            print("\n--- TOKENIZADOR INTERACTIVO ---")
+            if not CLIENTE_LLAMA.esta_disponible():
+                print("[!] El servidor no responde. Inicia el servidor primero.")
+            else:
+                texto = input("Introduce una frase o codigo para tokenizar: ").strip()
+                if texto:
+                    try:
+                        tokens = CLIENTE_LLAMA.tokenizar(texto)
+                        print(f"Total tokens: {len(tokens)}")
+                        print(f"IDs de tokens: {tokens}")
+                        recuperado = CLIENTE_LLAMA.detokenizar(tokens)
+                        print(f"Texto reconstruido: {recuperado}")
+                    except Exception as e:
+                        print(f"[!] Error con tokenizador: {e}")
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "6":
+            print("\n--- TEST DE INFERENCIA LOCAL (/v1/chat/completions) ---")
+            if not CLIENTE_LLAMA.esta_disponible():
+                print("[!] El servidor no responde. Inicia el servidor primero.")
+            else:
+                prompt_usr = input("Mensaje para el modelo: ").strip()
+                if prompt_usr:
+                    try:
+                        print("Generando respuesta en local...")
+                        resp = CLIENTE_LLAMA.completar_chat(
+                            mensajes=[{"role": "user", "content": prompt_usr}],
+                            temperatura=0.2,
+                            max_tokens=256,
+                        )
+                        elecciones = resp.get("choices", [])
+                        if elecciones:
+                            contenido = elecciones[0].get("message", {}).get("content", "")
+                            print(f"\nRespuesta del modelo:\n{'-'*40}\n{contenido}\n{'-'*40}")
+                            uso = resp.get("usage", {})
+                            print(f"Uso de tokens: Prompt={uso.get('prompt_tokens', 0)}, Salida={uso.get('completion_tokens', 0)}")
+                    except Exception as e:
+                        print(f"[!] Error durante la inferencia: {e}")
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "0":
+            break
+
+
 def iniciar_menu() -> None:
     while True:
         mostrar_banner()
@@ -300,11 +450,12 @@ def iniciar_menu() -> None:
         print("  3. Consultar Base de Datos y Caché Local")
         print("  4. Ejecutar Pruebas Unitarias del Sistema (Tests)")
         print("  5. Catálogo de Modelos y Aprovisionamiento del Búnker")
+        print("  6. Motor de Inferencia Local y Control de Procesos (Fase 2)")
         print("  0. Salir")
         print("-" * 50)
         
         try:
-            opcion = input("Selecciona una opción [0-5]: ").strip()
+            opcion = input("Selecciona una opción [0-6]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n\nSaliendo de GuarIdA...")
             sys.exit(0)
@@ -324,6 +475,8 @@ def iniciar_menu() -> None:
         elif opcion == "5":
             opcion_catalogo_y_bunker()
             input("Presiona [Enter] para volver al menú...")
+        elif opcion == "6":
+            opcion_motor_inferencia()
         elif opcion == "0":
             print("\nCerrando GuarIdA. ¡Hasta pronto!\n")
             break

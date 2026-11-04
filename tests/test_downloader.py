@@ -83,8 +83,7 @@ class TestDownloader(unittest.TestCase):
             self.assertTrue(fake_gguf.exists())
 
             cache = GestorCache(db_path)
-            descargador = DescargadorModelos(directorio_modelos=models_dir)
-            descargador.cache = cache
+            descargador = DescargadorModelos(directorio_modelos=models_dir, gestor_cache=cache)
 
             # Guardar registro inicial
             reg = ModeloRegistro(

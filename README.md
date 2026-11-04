@@ -74,7 +74,7 @@ Conclusiones de la comparativa:
 ## Hoja de ruta
 
 - [x] **Fase 1: Base de hardware, diagnóstico y aprovisionamiento offline** (detección GPU/GTT, caché SQLite, herramientas del búnker y perfiles afinados).
-- [ ] **Fase 2: Motor de inferencia local y control de procesos** (levantamiento autónomo de `llama-server`, cliente HTTP local offline y verificación de salud).
+- [x] **Fase 2: Motor de inferencia local y control de procesos** (levantamiento autónomo de `llama-server` con perfiles de SQLite, cliente HTTP 100% offline, endpoints `/health`, `/slots`, `/tokenize` y chat).
 - [ ] **Fase 3: Arnés de agentes y roles** (orquestación en bucles iterativos, árboles de nodos, embeddings y parches en worktrees de Git).
 - [ ] **Fase 4: Aislamiento del sistema** (sandboxing de herramientas a nivel de sistema operativo).
 
@@ -173,6 +173,7 @@ El estado del búnker y los datos locales se aseguran con derivación SHAKE-256 
 - [ADR 0003: Aprovisionamiento Único Offline, Gobernanza Regional y Seguridad Postcuántica](docs/adr/0003-aprovisionamiento-offline-gobernanza-postcuantica.md)
 - [ADR 0004: Arquitectura Multi-Rol Especializada, Aprovisionamiento Flexible y Comparador de Cuantizaciones](docs/adr/0004-arquitectura-multi-rol-aprovisionamiento-flexible.md)
 - [ADR 0005: Persistencia de Perfiles de Afinamiento Óptimo y Ecosistema de Herramientas Portables](docs/adr/0005-persistencia-afinamiento-optimo-y-herramientas-bunker.md)
+- [ADR 0006: Motor de Inferencia Local y Control de Procesos](docs/adr/0006-motor-inferencia-local-y-control-de-procesos.md)
 
 ## Licencia
 
