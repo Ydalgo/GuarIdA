@@ -12,6 +12,7 @@ from guarida_manager.downloader.models import (
     DescargadorModelos,
 )
 from guarida_manager.downloader.provisioning import OrquestadorAprovisionamiento
+from guarida_manager.downloader.tools import GestorHerramientasBunker
 from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.memory_probe import ejecutar_prueba_estres_memoria
 from guarida_manager.roles import AsignacionRoles
@@ -102,18 +103,20 @@ def opcion_tests() -> None:
 def opcion_catalogo_y_bunker() -> None:
     while True:
         print("\n" + "=" * 65)
-        print("  CATÁLOGO DE MODELOS, ROLES Y APROVISIONAMIENTO DEL BÚNKER")
+        print("  CATÁLOGO, HERRAMIENTAS Y APROVISIONAMIENTO DEL BÚNKER")
         print("=" * 65)
-        print("Submenú de Selección y Experimentación:")
+        print("Submenú de Selección, Herramientas y Afinamiento:")
         print("  1. Explorar Catálogo por Roles (Coder, Chat Español, Sin Censura, Embeddings)")
         print("  2. Comparador de Cuantizaciones (Q3 vs Q4 vs Q5) y Memoria de Contexto")
-        print("  3. Añadir Modelo Personalizado de Hugging Face (cualquier repo/archivo .gguf)")
-        print("  4. Descargar Cesta Multirrol y Aprovisionar Búnker Offline")
-        print("  5. Archivar Modelo (Liberar espacio en disco conservando métricas SQLite)")
+        print("  3. Estado y Descarga de Herramientas del Búnker (llama-server, git, ripgrep)")
+        print("  4. Añadir Modelo Personalizado de Hugging Face (cualquier repo/archivo .gguf)")
+        print("  5. Descargar Cesta Multirrol y Aprovisionar Búnker Offline")
+        print("  6. Consultar Perfiles de Afinamiento Óptimo Guardados (Memoria SQLite)")
+        print("  7. Archivar Modelo (Liberar disco conservando afinamiento y métricas)")
         print("  0. Volver al menú principal")
         print("-" * 65)
 
-        sub = input("Selecciona una opción [0-5]: ").strip()
+        sub = input("Selecciona una opción [0-7]: ").strip()
 
         if sub == "1":
             print("\nFiltros disponibles: [1] Coder, [2] Chat en Español, [3] Sin Censura (Abliterated), [4] Embeddings, [5] Todos")
@@ -153,6 +156,33 @@ def opcion_catalogo_y_bunker() -> None:
             input("Presiona [Enter] para continuar...")
 
         elif sub == "3":
+            print("\n--- HERRAMIENTAS Y BINARIOS DEL BÚNKER ---")
+            estados = GestorHerramientasBunker.verificar_todas_herramientas()
+            for h in estados:
+                estado_str = f"INSTALADA ({h.version})" if h.instalada else "NO DETECTADA"
+                critica_str = "[CRÍTICA]" if h.es_critica else "[OPCIONAL]"
+                print(f"* {h.nombre} {critica_str}: {estado_str}")
+                print(f"  - Ruta: {h.ruta or 'Pendiente de descarga'}")
+                print(f"  - Uso:  {h.descripcion}\n")
+
+            faltantes = [h.id for h in estados if not h.instalada]
+            if faltantes:
+                try:
+                    desc = input(f"¿Deseas descargar las herramientas faltantes ({', '.join(faltantes)})? (s/N): ").strip().lower()
+                    if desc == "s":
+                        for fid in faltantes:
+                            try:
+                                GestorHerramientasBunker.descargar_y_desplegar(fid)
+                            except Exception as e:
+                                print(f"[!] Error descargando {fid}: {e}")
+                except (KeyboardInterrupt, EOFError):
+                    pass
+            try:
+                input("Presiona [Enter] para continuar...")
+            except (KeyboardInterrupt, EOFError):
+                pass
+
+        elif sub == "4":
             print("\n--- AÑADIR MODELO PERSONALIZADO DE HUGGING FACE ---")
             repo = input("Repositorio HF (ej. bartowski/Qwen2.5-7B-Instruct-GGUF): ").strip()
             filename = input("Nombre de archivo .gguf (ej. Qwen2.5-7B-Instruct-Q4_K_M.gguf): ").strip()
@@ -180,7 +210,7 @@ def opcion_catalogo_y_bunker() -> None:
                 print("[!] Datos incompletos. Operación cancelada.")
             input("Presiona [Enter] para continuar...")
 
-        elif sub == "4":
+        elif sub == "5":
             print("\n--- APROVISIONAMIENTO MULTIRROL DEL BÚNKER ---")
             print("Selecciona los modelos que deseas descargar en este lote único:")
             modelos_disp = list(CatalogoModelos.MODELOS.values())
@@ -192,7 +222,6 @@ def opcion_catalogo_y_bunker() -> None:
                 indices = [int(x.strip()) for x in seleccion.split(",") if x.strip().isdigit()]
                 modelos_elegidos = [modelos_disp[idx - 1].id for idx in indices if 1 <= idx <= len(modelos_disp)]
             else:
-                # Lote recomendado multirrol: Coder 7B Q4, Chat en Español 3B Q4, Embeddings BGE-M3
                 modelos_elegidos = ["qwen2.5-coder-7b-q4", "qwen2.5-3b-chat-q4", "bge-m3-q4"]
 
             print(f"\nModelos seleccionados para descargar ({len(modelos_elegidos)}):")
@@ -213,8 +242,33 @@ def opcion_catalogo_y_bunker() -> None:
                 print(f"\n[OK] ¡Búnker sellado con éxito! Estado: {cfg.estado_bunker}")
             input("Presiona [Enter] para volver...")
 
-        elif sub == "5":
-            print("\n--- ARCHIVAR MODELO (LIBERAR DISCO MANTENIENDO BENCHMARKS) ---")
+        elif sub == "6":
+            print("\n--- PERFILES DE AFINAMIENTO ÓPTIMO GUARDADOS EN MEMORIA (SQLITE) ---")
+            hardware = obtener_informacion_hardware()
+            hash_hw = hardware.hash_hardware
+            perfiles = GestorCache().listar_configuraciones_optimas(hash_hw)
+
+            if not perfiles:
+                print(f"Aún no hay perfiles afinados para este hardware específico ({hash_hw[:12]}...).")
+                print("Cuando ejecutes un benchmark o archives un modelo, su mejor configuración se guardará aquí automáticamente.")
+            else:
+                print(f"Configuraciones óptimas registradas para este equipo ({len(perfiles)}):")
+                print("-" * 75)
+                for p in perfiles:
+                    rec_str = "[RECOMENDADA]" if p.get("es_recomendada") else ""
+                    print(f"* Modelo: {p['modelo_id']} {rec_str}")
+                    print(f"  - Capas en GPU (n_gpu_layers): {p['n_gpu_layers']}")
+                    print(f"  - Contexto afinado:            {p['ctx_size']} tokens")
+                    print(f"  - Batch size / KV Cache:       {p['batch_size']} / {p['kv_cache_tipo']}")
+                    print(f"  - Velocidad registrada:        {p['tok_s_medido']} tokens/s")
+                    print(f"  - Pico VRAM/GTT medido:        {p['gtt_pico_mb']} MB")
+                    print(f"  - Nota / Motivo descarte:      {p.get('motivo_descarte_o_nota') or 'Óptima para uso'}")
+                    print()
+                print("-" * 75)
+            input("Presiona [Enter] para continuar...")
+
+        elif sub == "7":
+            print("\n--- ARCHIVAR MODELO (LIBERAR DISCO MANTENIENDO AFINAMIENTO) ---")
             descargador = DescargadorModelos()
             with GestorCache().sesion() as conn:
                 filas = conn.execute("SELECT id, filename, estado FROM modelos WHERE ruta_local != '';").fetchall()
@@ -228,7 +282,7 @@ def opcion_catalogo_y_bunker() -> None:
                 mid_borrar = input("\nIntroduce el ID del modelo que deseas archivar/eliminar del disco: ").strip()
                 if mid_borrar:
                     if descargador.archivar_modelo_sin_archivo(mid_borrar):
-                        print(f"[OK] Archivo físico eliminado. Las métricas y benchmarks de '{mid_borrar}' siguen guardadas en SQLite.")
+                        print(f"[OK] Archivo físico eliminado. La mejor configuración y benchmarks de '{mid_borrar}' siguen guardadas en SQLite.")
                     else:
                         print("[!] No se encontró el modelo especificado.")
             input("Presiona [Enter] para continuar...")

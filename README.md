@@ -138,6 +138,11 @@ Si prefieres ejecutar una función específica sin pasar por el menú interactiv
   python -m guarida_manager.comparator
   ```
 
+- **Estado y Descarga de Herramientas del Búnker (llama-server, git, ripgrep):**
+  ```bash
+  python -m guarida_manager.downloader.tools
+  ```
+
 - **Aprovisionamiento Único del Búnker (Setup 100% Offline):**
   ```bash
   python -m guarida_manager.downloader.provisioning
@@ -155,23 +160,35 @@ Para maximizar la eficiencia de tokens y memoria de contexto, GuarIdA desacopla 
 - **Rol Embedding / Vectorial:** Indexación semántica y navegación de árboles sintácticos (AST) y bucles iterativos (ej. BGE-M3 con soporte en español o Nomic Embed).
 - **Rol Sin Censura / Desalineado (Opcional):** Modelos *abliterated* para auditoría de vulnerabilidades y ciberseguridad sin filtros restrictivos.
 
-### 5. Gobernanza y Cumplimiento Normativo (EU AI Act)
+### 5. Memoria Permanente de Afinamiento Óptimo
+GuarIdA no olvida el trabajo de optimización:
+- **Persistencia inmutable en SQLite:** Aunque se elimine un archivo `.gguf` de 10 GB para liberar almacenamiento, su mejor configuración (`n_gpu_layers`, `ctx_size`, `batch_size`, `kv_cache_tipo`, `tok_s`) y los motivos de descarte quedan registrados permanentemente en la base de datos `guarida.db`.
+- **Reutilización instantánea:** Si el usuario vuelve a descargar el modelo o decide reutilizarlo para tareas en segundo plano (*batch*), el búnker aplica directamente la configuración afinada sin necesidad de recalibrar.
+
+### 6. Ecosistema de Herramientas Portables del Búnker
+El aprovisionamiento incluye todo el instrumental indispensable para que el agente opere con total autonomía fuera de línea:
+- **`llama-server`:** Motor de inferencia compilado con soporte nativo Vulkan o CPU.
+- **`git`:** Herramienta de control de versiones para la creación de *worktrees* aislados donde el Coder aplica y prueba parches.
+- **`ripgrep` (`rg`):** Motor de búsqueda ultra-rápido en código fuente para navegación sin sobrecargar el contexto.
+
+### 7. Gobernanza y Cumplimiento Normativo (EU AI Act)
 GuarIdA incorpora un motor de auditoría legal automática para usuarios en **España y la Unión Europea** basado en el **Reglamento (UE) 2024/1689 (EU AI Act)**:
 - Verificación del resumen público del conjunto de datos de entrenamiento (Art. 53(1)(d)).
 - Respeto a las directivas de derechos de autor y reservas de minería de datos (Directiva UE 2019/790).
 - Compatibilidad de licencias de código abierto (Apache-2.0, MIT).
 - **Gobernanza informativa no bloqueante:** La auditoría guía y previene riesgos, pero el usuario mantiene la libertad de instalar modelos personalizados o desalineados en su entorno privado.
 
-### 6. Criptografía Preparada para la Era Postcuántica (PQC-Ready)
+### 8. Criptografía Preparada para la Era Postcuántica (PQC-Ready)
 El almacenamiento local, la configuración y el estado del búnker se protegen mediante primitivas resistentes a la computación cuántica:
 - Derivación de claves basada en la función esponja **SHAKE-256** (FIPS 202) y **SHA3-512** (256 bits de seguridad cuántica simétrica).
 - Cifrado simétrico autenticado (*Encrypt-then-MAC*) para evitar ataques de manipulación o extracción futura (*harvest now, decrypt later*).
 
-### 7. Decisiones de Arquitectura (ADRs)
+### 9. Decisiones de Arquitectura (ADRs)
 - [ADR 0001: Arquitectura Base y Gestor de Inferencia Local](docs/adr/0001-arquitectura-base-fase-1.md)
 - [ADR 0002: Verificación Empírica y Prueba de Estrés de Memoria GPU/GTT](docs/adr/0002-verificacion-empirica-memoria-gpu.md)
 - [ADR 0003: Aprovisionamiento Único Offline, Gobernanza Regional y Seguridad Postcuántica](docs/adr/0003-aprovisionamiento-offline-gobernanza-postcuantica.md)
 - [ADR 0004: Arquitectura Multi-Rol Especializada, Aprovisionamiento Flexible y Comparador de Cuantizaciones](docs/adr/0004-arquitectura-multi-rol-aprovisionamiento-flexible.md)
+- [ADR 0005: Persistencia de Perfiles de Afinamiento Óptimo y Ecosistema de Herramientas Portables](docs/adr/0005-persistencia-afinamiento-optimo-y-herramientas-bunker.md)
 
 ## Licencia
 

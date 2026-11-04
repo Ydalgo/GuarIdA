@@ -17,6 +17,7 @@ from guarida_manager.downloader.models import (
     CestaDescarga,
     DescargadorModelos,
 )
+from guarida_manager.downloader.tools import GestorHerramientasBunker
 from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.roles import AsignacionRoles
 
@@ -28,6 +29,7 @@ class ConfiguracionBunker:
     soporte_informes_pdf: bool
     roles: dict[str, str]                     # Mapeo de roles a modelos
     modelos_instalados: list[str]             # Todos los modelos descargados en lote
+    herramientas_instaladas: list[str]        # Herramientas listas (llama-server, git, ripgrep)
     binario_inferencia_instalado: bool
     cifrado_postcuantico_activo: bool
     estado_bunker: str                        # "PENDIENTE_APROVISIONAMIENTO", "OFFLINE_COMPLETO"
@@ -96,13 +98,28 @@ class OrquestadorAprovisionamiento:
             log("Instalando dependencias de interfaz gráfica offline (PyQt6)...", 8.0)
             self.instalar_paquete_pip("PyQt6")
 
-        # 3. Descarga del motor de inferencia llama.cpp
-        log("Descargando binario oficial de inferencia llama.cpp...", 12.0)
+        # 3. Descarga y verificación del ecosistema de herramientas (llama-server, git, ripgrep)
+        log("Verificando herramientas del sistema y binarios del búnker...", 10.0)
         perfil_binario = GestorBinariosLlama.resolver_perfil_sistema()
         GestorBinariosLlama.descargar_y_desplegar(
             perfil=perfil_binario,
-            callback_progreso=lambda msg, p: log(f"Binario: {msg}", 12.0 + (p * 0.15)),
+            callback_progreso=lambda msg, p: log(f"Binario inferencia: {msg}", 10.0 + (p * 0.12)),
         )
+
+        herramientas_listas = ["llama-server"]
+        for h in GestorHerramientasBunker.verificar_todas_herramientas():
+            if h.id == "llama-server":
+                continue
+            if h.instalada:
+                log(f"Herramienta disponible: {h.nombre} ({h.version or 'OK'})", 24.0)
+                herramientas_listas.append(h.id)
+            else:
+                log(f"Descargando herramienta portátil: {h.nombre}...", 24.0)
+                try:
+                    GestorHerramientasBunker.descargar_y_desplegar(h.id)
+                    herramientas_listas.append(h.id)
+                except Exception as e:
+                    log(f"Advertencia: no se pudo desplegar automáticamente {h.nombre}: {e}", 24.0)
 
         # 4. Resolver lista de modelos a descargar
         ids_a_descargar = modelos_ids_lote or [
@@ -142,6 +159,7 @@ class OrquestadorAprovisionamiento:
             soporte_informes_pdf=instalar_pdf,
             roles=roles_obj.resumen_roles(),
             modelos_instalados=[m.id for m in modelos_definiciones],
+            herramientas_instaladas=herramientas_listas,
             binario_inferencia_instalado=True,
             cifrado_postcuantico_activo=bool(clave_maestra_boveda),
             estado_bunker="OFFLINE_COMPLETO",

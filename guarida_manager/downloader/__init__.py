@@ -9,6 +9,11 @@ from guarida_manager.downloader.compliance import (
 from guarida_manager.downloader.crypto import BovedaCriptograficaPostcuantica
 from guarida_manager.downloader.models import CatalogoModelos, DescargadorModelos
 from guarida_manager.downloader.provisioning import OrquestadorAprovisionamiento
+from guarida_manager.downloader.tools import (
+    DefinicionHerramienta,
+    EstadoHerramienta,
+    GestorHerramientasBunker,
+)
 
 __all__ = [
     "GestorBinariosLlama",
@@ -19,4 +24,7 @@ __all__ = [
     "CatalogoModelos",
     "DescargadorModelos",
     "OrquestadorAprovisionamiento",
+    "GestorHerramientasBunker",
+    "DefinicionHerramienta",
+    "EstadoHerramienta",
 ]

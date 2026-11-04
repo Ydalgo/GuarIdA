@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from guarida_manager.cache import GestorCache, ModeloRegistro
+from guarida_manager.cache import BenchmarkRegistro, GestorCache, ModeloRegistro
 from guarida_manager.downloader.binaries import GestorBinariosLlama
 from guarida_manager.downloader.compliance import RegionNormativa
 from guarida_manager.downloader.models import (
@@ -99,6 +99,20 @@ class TestDownloader(unittest.TestCase):
             )
             cache.guardar_modelo(reg)
 
+            # Registrar un benchmark medido antes de archivar
+            hw_hash = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+            b_reg = BenchmarkRegistro(
+                modelo_id="test_archivable",
+                hash_hardware=hw_hash,
+                binario_usado="gpu",
+                n_gpu_layers=28,
+                ctx_size=16384,
+                tok_s=14.5,
+                gtt_pico_mb=6200.0,
+                exito_tool_calling=True,
+            )
+            cache.guardar_benchmark(b_reg)
+
             # Archivar sin archivo
             exito = descargador.archivar_modelo_sin_archivo("test_archivable")
             self.assertTrue(exito)
@@ -110,6 +124,13 @@ class TestDownloader(unittest.TestCase):
             self.assertEqual(recuperado["estado"], "archivado_sin_archivo")
             self.assertEqual(recuperado["ruta_local"], "")
             self.assertEqual(recuperado["license"], "apache-2.0")
+
+            # La mejor configuración afinada DEBE estar disponible para reutilización
+            afinamiento = descargador.consultar_afinamiento_guardado("test_archivable", hw_hash)
+            self.assertIsNotNone(afinamiento)
+            self.assertEqual(afinamiento["n_gpu_layers"], 28)
+            self.assertEqual(afinamiento["ctx_size"], 16384)
+            self.assertEqual(afinamiento["tok_s_medido"], 14.5)
 
 
 if __name__ == "__main__":

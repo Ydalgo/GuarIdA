@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from guarida_manager.cache import BenchmarkRegistro, GestorCache, ModeloRegistro
+from guarida_manager.cache import (
+    BenchmarkRegistro,
+    ConfiguracionOptimaRegistro,
+    GestorCache,
+    ModeloRegistro,
+)
 
 
 class TestCache(unittest.TestCase):
@@ -108,6 +113,46 @@ class TestCache(unittest.TestCase):
         modulos = self.cache.obtener_modulos_instalados()
         self.assertEqual(len(modulos), 1)
         self.assertEqual(modulos[0]["nombre"], "core")
+
+    def test_configuracion_optima_persistencia(self):
+        modelo = ModeloRegistro(
+            id="qwen-coder-optimo",
+            repo_hf="Qwen/test",
+            filename="qwen.gguf",
+            ruta_local="/fake/path",
+            estado="archivado_sin_archivo",
+            motivo_descarte="Demasiado lento para chat interactivo, pero afinado para background batch",
+        )
+        self.cache.guardar_modelo(modelo)
+
+        hash_hw = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        config_optima = ConfiguracionOptimaRegistro(
+            modelo_id="qwen-coder-optimo",
+            hash_hardware=hash_hw,
+            n_gpu_layers=33,
+            ctx_size=16384,
+            batch_size=512,
+            kv_cache_tipo="q4_0",
+            tok_s_medido=13.2,
+            gtt_pico_mb=8450.0,
+            fecha_afinamiento="2026-11-04T18:00:00Z",
+            motivo_descarte_o_nota="Configuración óptima: 33 capas GPU, 16k contexto, KV q4_0",
+            es_recomendada=True,
+        )
+
+        self.cache.guardar_configuracion_optima(config_optima)
+
+        recuperada = self.cache.obtener_configuracion_optima("qwen-coder-optimo", hash_hw)
+        self.assertIsNotNone(recuperada)
+        self.assertEqual(recuperada["n_gpu_layers"], 33)
+        self.assertEqual(recuperada["ctx_size"], 16384)
+        self.assertEqual(recuperada["kv_cache_tipo"], "q4_0")
+        self.assertEqual(recuperada["tok_s_medido"], 13.2)
+        self.assertTrue(recuperada["es_recomendada"])
+
+        lista = self.cache.listar_configuraciones_optimas(hash_hw)
+        self.assertEqual(len(lista), 1)
+        self.assertEqual(lista[0]["modelo_id"], "qwen-coder-optimo")
 
 
 if __name__ == "__main__":

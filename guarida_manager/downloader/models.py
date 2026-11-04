@@ -4,10 +4,16 @@ import shutil
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
+
+from datetime import datetime, timezone
 
 from guarida_manager import DIRECTORIO_MODELOS
-from guarida_manager.cache import GestorCache, ModeloRegistro
+from guarida_manager.cache import (
+    ConfiguracionOptimaRegistro,
+    GestorCache,
+    ModeloRegistro,
+)
 from guarida_manager.downloader.compliance import (
     EvaluacionCumplimiento,
     GestorCumplimientoNormativo,
@@ -424,6 +430,28 @@ class DescargadorModelos:
             except Exception:
                 pass
 
+        # Preservar automáticamente el mejor benchmark en la tabla de configuraciones óptimas si no existe
+        benchmarks = self.cache.listar_benchmarks_por_modelo(modelo_id)
+        if benchmarks:
+            mejor_b = benchmarks[0]
+            config_existente = self.cache.obtener_configuracion_optima(modelo_id, mejor_b["hash_hardware"])
+            if not config_existente:
+                self.cache.guardar_configuracion_optima(
+                    ConfiguracionOptimaRegistro(
+                        modelo_id=modelo_id,
+                        hash_hardware=mejor_b["hash_hardware"],
+                        n_gpu_layers=mejor_b["n_gpu_layers"],
+                        ctx_size=mejor_b["ctx_size"],
+                        batch_size=512,
+                        kv_cache_tipo="q4_0",
+                        tok_s_medido=mejor_b["tok_s"],
+                        gtt_pico_mb=mejor_b["gtt_pico_mb"],
+                        fecha_afinamiento=datetime.now(timezone.utc).isoformat(),
+                        motivo_descarte_o_nota=f"Afinamiento preservado al archivar: {mejor_b['tok_s']} t/s con {mejor_b['n_gpu_layers']} capas GPU",
+                        es_recomendada=True,
+                    )
+                )
+
         registro_actualizado = ModeloRegistro(
             id=modelo_dict["id"],
             repo_hf=modelo_dict["repo_hf"],
@@ -436,6 +464,12 @@ class DescargadorModelos:
         )
         self.cache.guardar_modelo(registro_actualizado)
         return True
+
+    def consultar_afinamiento_guardado(
+        self, modelo_id: str, hash_hardware: str
+    ) -> Optional[dict[str, Any]]:
+        """Recupera la mejor configuración afinada guardada en el histórico para este hardware."""
+        return self.cache.obtener_configuracion_optima(modelo_id, hash_hardware)
 
     def _registrar_en_cache(self, modelo: DefinicionModeloCatalogo, ruta_local: str) -> None:
         registro = ModeloRegistro(

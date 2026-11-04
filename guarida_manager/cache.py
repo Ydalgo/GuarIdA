@@ -39,6 +39,21 @@ class ModuloRegistro:
     fecha: str
 
 
+@dataclass(frozen=True)
+class ConfiguracionOptimaRegistro:
+    modelo_id: str
+    hash_hardware: str
+    n_gpu_layers: int
+    ctx_size: int
+    batch_size: int
+    kv_cache_tipo: str
+    tok_s_medido: float
+    gtt_pico_mb: float
+    fecha_afinamiento: str
+    motivo_descarte_o_nota: Optional[str] = None
+    es_recomendada: bool = True
+
+
 class GestorCache:
     def __init__(self, ruta_base_datos: Optional[Path | str] = None) -> None:
         if ruta_base_datos is None:
@@ -105,6 +120,31 @@ class GestorCache:
                     nombre TEXT PRIMARY KEY,
                     fecha TEXT NOT NULL
                 );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS configuraciones_optimas (
+                    modelo_id TEXT NOT NULL,
+                    hash_hardware TEXT NOT NULL,
+                    n_gpu_layers INTEGER NOT NULL,
+                    ctx_size INTEGER NOT NULL,
+                    batch_size INTEGER NOT NULL,
+                    kv_cache_tipo TEXT NOT NULL,
+                    tok_s_medido REAL NOT NULL,
+                    gtt_pico_mb REAL NOT NULL,
+                    fecha_afinamiento TEXT NOT NULL,
+                    motivo_descarte_o_nota TEXT,
+                    es_recomendada INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (modelo_id, hash_hardware),
+                    FOREIGN KEY (modelo_id) REFERENCES modelos(id) ON DELETE CASCADE
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_config_optima_lookup
+                ON configuraciones_optimas(modelo_id, hash_hardware);
                 """
             )
 
@@ -236,6 +276,95 @@ class GestorCache:
                 elemento = dict(fila)
                 elemento["exito_tool_calling"] = bool(elemento["exito_tool_calling"])
                 resultados.append(elemento)
+            return resultados
+
+    def guardar_configuracion_optima(self, config: ConfiguracionOptimaRegistro) -> None:
+        with self.sesion() as conexion:
+            conexion.execute(
+                """
+                INSERT INTO configuraciones_optimas (
+                    modelo_id, hash_hardware, n_gpu_layers, ctx_size,
+                    batch_size, kv_cache_tipo, tok_s_medido, gtt_pico_mb,
+                    fecha_afinamiento, motivo_descarte_o_nota, es_recomendada
+                )
+                VALUES (
+                    :modelo_id, :hash_hardware, :n_gpu_layers, :ctx_size,
+                    :batch_size, :kv_cache_tipo, :tok_s_medido, :gtt_pico_mb,
+                    :fecha_afinamiento, :motivo_descarte_o_nota, :es_recomendada
+                )
+                ON CONFLICT(modelo_id, hash_hardware) DO UPDATE SET
+                    n_gpu_layers = excluded.n_gpu_layers,
+                    ctx_size = excluded.ctx_size,
+                    batch_size = excluded.batch_size,
+                    kv_cache_tipo = excluded.kv_cache_tipo,
+                    tok_s_medido = excluded.tok_s_medido,
+                    gtt_pico_mb = excluded.gtt_pico_mb,
+                    fecha_afinamiento = excluded.fecha_afinamiento,
+                    motivo_descarte_o_nota = excluded.motivo_descarte_o_nota,
+                    es_recomendada = excluded.es_recomendada;
+                """,
+                {
+                    "modelo_id": config.modelo_id,
+                    "hash_hardware": config.hash_hardware,
+                    "n_gpu_layers": config.n_gpu_layers,
+                    "ctx_size": config.ctx_size,
+                    "batch_size": config.batch_size,
+                    "kv_cache_tipo": config.kv_cache_tipo,
+                    "tok_s_medido": config.tok_s_medido,
+                    "gtt_pico_mb": config.gtt_pico_mb,
+                    "fecha_afinamiento": config.fecha_afinamiento,
+                    "motivo_descarte_o_nota": config.motivo_descarte_o_nota,
+                    "es_recomendada": 1 if config.es_recomendada else 0,
+                },
+            )
+
+    def obtener_configuracion_optima(
+        self, modelo_id: str, hash_hardware: str
+    ) -> Optional[dict[str, Any]]:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                """
+                SELECT * FROM configuraciones_optimas
+                WHERE modelo_id = ? AND hash_hardware = ?;
+                """,
+                (modelo_id, hash_hardware),
+            )
+            fila = cursor.fetchone()
+            if fila:
+                resultado = dict(fila)
+                resultado["es_recomendada"] = bool(resultado["es_recomendada"])
+                return resultado
+            return None
+
+    def listar_configuraciones_optimas(
+        self, hash_hardware: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        with self.sesion() as conexion:
+            if hash_hardware:
+                cursor = conexion.execute(
+                    """
+                    SELECT co.*, m.filename, m.estado, m.license
+                    FROM configuraciones_optimas co
+                    LEFT JOIN modelos m ON co.modelo_id = m.id
+                    WHERE co.hash_hardware = ?
+                    ORDER BY co.es_recomendada DESC, co.tok_s_medido DESC;
+                    """,
+                    (hash_hardware,),
+                )
+            else:
+                cursor = conexion.execute(
+                    """
+                    SELECT co.*, m.filename, m.estado, m.license
+                    FROM configuraciones_optimas co
+                    LEFT JOIN modelos m ON co.modelo_id = m.id
+                    ORDER BY co.es_recomendada DESC, co.tok_s_medido DESC;
+                    """
+                )
+            resultados = []
+            for fila in cursor.fetchall():
+                item = dict(fila)
+                item["es_recomendada"] = bool(item["es_recomendada"])
+                resultados.append(item)
             return resultados
 
     def registrar_modulo_instalado(self, nombre: str) -> None:
