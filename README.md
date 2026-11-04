@@ -42,25 +42,22 @@ El problema de fondo: la IA se ha democratizado con un éxito enorme, pero confo
 
 El primer dominio es la programación. Cualquier modelo en la nube tendrá mejores resultados y será mucho más rápido; no es el deseo del proyecto competir en esos parámetros. Se compite en **seguridad, privacidad y capacidad de uso en cualquier situación**, incluso sin conexión. Solo se necesita el sistema operativo, el hardware y un punto de luz que alimente ese PC modesto.
 
-## Estado actual: Fase 1 cerrada
+## Estado actual
 
-### Stack de inferencia
+El proyecto está enfocado en exprimir hardware doméstico real (APUs, gráficas integradas de portátiles o GPUs modestas), funcionando 100% en local y sin conexión a internet tras la configuración inicial.
 
-| Elemento | Valor |
-|---|---|
-| Backend | `llama-server` con Vulkan (build `b11707`) |
-| Servicio | systemd de usuario, puerto `8083` |
-| Modelo | Qwen2.5-Coder-7B (contexto 32k), GGUF, Q4 |
-| Contexto en uso | 16 384 tokens |
-| Estado del GTT | ~93 % en la APU con esta configuración |
+Tenemos cerrado el núcleo de diagnóstico, aprovisionamiento y persistencia:
+- Detección real de hardware (CPU, RAM y memoria VRAM/GTT compartida tanto en Windows como en Linux).
+- Prueba empírica de estrés de memoria: antes de dar nada por bueno, se fuerza la asignación en memoria para ver si el hardware aguanta.
+- Catálogo multirrol: soporte para modelos de código, chat, embeddings y modelos sin censura para pruebas de seguridad.
+- Persistencia en SQLite (`guarida.db`): almacena la mejor configuración conseguida en cada máquina (capas GPU, contexto, velocidad de tokens). Si borras el `.gguf` para liberar espacio, la configuración afinada no se pierde.
+- Gestor de herramientas: detección y descarga de herramientas portables (`llama-server`, `git`, `ripgrep`).
+- Auditoría legal transparente (EU AI Act) para saber el estado de licencias y datos de entrenamiento de cada modelo.
 
-**Restricción operativa:** no se sube a 32k sin reducir `--n-gpu-layers` o el tipo de KV cache. Cualquiera de las dos palancas degrada el rendimiento medido. Se acepta como límite conocido.
+<details>
+<summary>Histórico: comparativa previa de inferencia (fase inicial del proyecto)</summary>
 
-**KoboldCpp** (puerto `5001`) se mantiene solo como referencia, no como backend del stack.
-
-### Por qué llama.cpp Vulkan y no KoboldCpp
-
-En esta fase se midieron **KoboldCpp Vulkan, llama.cpp CPU y llama.cpp Vulkan** con los mismos cuatro casos: generar una función, corregir un bug, explicar un fragmento y responder con contexto largo. En el proyecto anterior se habían evaluado también Ollama y LM Studio.
+Datos de rendimiento medidos en pruebas iniciales previas con APU/Vulkan:
 
 | Caso | KoboldCpp Vulkan | llama.cpp CPU | llama.cpp Vulkan |
 |---|---:|---:|---:|
@@ -69,26 +66,17 @@ En esta fase se midieron **KoboldCpp Vulkan, llama.cpp CPU y llama.cpp Vulkan** 
 | Explicar código | 10,50 t/s | 6,89 t/s | 12,68 t/s |
 | Contexto largo | 0,53 t/s | 0,11 t/s | **0,80 t/s** |
 
-- En casos cortos, KoboldCpp y llama.cpp Vulkan están empatados (variaciones dentro del ruido).
-- En **contexto largo**, llama.cpp Vulkan es ~50 % más rápido. Es el escenario que importa para un agente, porque el prompt crece con las iteraciones.
-- llama.cpp CPU se descartó: ~7× más lento en contexto largo (386 s frente a 53 s).
-- FlashAttention se descartó en Vulkan/APU: sin ganancia consistente y ligeramente peor en contexto largo.
-
-El argumento de fondo no es solo el rendimiento: `llama-server` es el binario oficial de llama.cpp, comparte ecosistema con el arnés que ejecutará las herramientas, permite control granular de parámetros (KV cache K/V por separado, batch size, samplers) y funciona como backend puro sin web UI y sin `--tools`. **La seguridad la da el arnés, no el servidor.**
-
-### Arquitectura en construcción
-
-1. **Arnés:** valida ruta, operación y rol antes de ejecutar cada herramienta. La seguridad no la da el prompt.
-2. **Roles:** Conversacional (solo lectura), Coder (worktree aislado), Patcher, Tester, Reviewer, Security, Documentador.
-3. **Worktrees aislados:** un parche nunca toca el proyecto original hasta que se aprueba.
+Conclusiones de la comparativa:
+- `llama-server` Vulkan rinde mejor en contextos largos, que es lo que devora un agente con iteraciones sucesivas.
+- No delegar seguridad en el modelo: la seguridad la gestiona el arnés del sistema, no el prompt.
+</details>
 
 ## Hoja de ruta
 
-- [x] **Fase 1:** infraestructura de inferencia medida y cerrada.
-- [ ] **Fase 2:** contrato del arnés + rol Conversacional.
-- [ ] **Fase 3:** rol Coder en worktree aislado.
-- [ ] **Fase 4:** aislamiento del sistema (Landlock/bubblewrap en Linux; usuario sin permiso de escritura en Windows).
-- [ ] **Fase 1.5 (opcional, condicionada al arnés):** optimización fina del backend (KV cache `q4_0`, batch size, samplers, concurrencia).
+- [x] **Fase 1: Base de hardware, diagnóstico y aprovisionamiento offline** (detección GPU/GTT, caché SQLite, herramientas del búnker y perfiles afinados).
+- [ ] **Fase 2: Motor de inferencia local y control de procesos** (levantamiento autónomo de `llama-server`, cliente HTTP local offline y verificación de salud).
+- [ ] **Fase 3: Arnés de agentes y roles** (orquestación en bucles iterativos, árboles de nodos, embeddings y parches en worktrees de Git).
+- [ ] **Fase 4: Aislamiento del sistema** (sandboxing de herramientas a nivel de sistema operativo).
 
 ## Instalación y Uso (Entorno de desarrollo)
 
@@ -153,35 +141,31 @@ Si prefieres ejecutar una función específica sin pasar por el menú interactiv
   python -m unittest discover tests
   ```
 
-### 4. Arquitectura Multi-Rol Especializada
-Para maximizar la eficiencia de tokens y memoria de contexto, GuarIdA desacopla el agente en roles complementarios que se comunican mediante un protocolo estructurado en JSON:
-- **Rol Conversacional / Chat:** Fluido en español nativo (ej. Qwen2.5-3B), coordina con el usuario sin saturar de código la conversación.
-- **Rol Coder:** Especializado en sintaxis, parches diff y generación técnica de código (ej. Qwen2.5-Coder-7B en Q4 o Q3).
-- **Rol Embedding / Vectorial:** Indexación semántica y navegación de árboles sintácticos (AST) y bucles iterativos (ej. BGE-M3 con soporte en español o Nomic Embed).
-- **Rol Sin Censura / Desalineado (Opcional):** Modelos *abliterated* para auditoría de vulnerabilidades y ciberseguridad sin filtros restrictivos.
+### 4. Separación de roles (ahorro de memoria y tokens)
+En vez de cargar un modelo gigante para todo, dividimos las tareas:
+- **Chat / Interacción:** Modelo ligero y rápido en español (ej. Qwen2.5-3B) para entenderte y coordinar sin ensuciar la ventana de contexto con bloques de código.
+- **Coder:** Modelo técnico especializado en código y parches diff (ej. Qwen2.5-Coder-7B en Q4 o Q3).
+- **Embeddings:** Vectorización de código y árboles sintácticos (ej. BGE-M3 o Nomic Embed) para buscar rápido en el repositorio sin enviar archivos enteros al modelo.
+- **Sin Censura / Desalineado (Opcional):** Modelos sin filtros para auditorías de seguridad y pentesting local.
 
-### 5. Memoria Permanente de Afinamiento Óptimo
-GuarIdA no olvida el trabajo de optimización:
-- **Persistencia inmutable en SQLite:** Aunque se elimine un archivo `.gguf` de 10 GB para liberar almacenamiento, su mejor configuración (`n_gpu_layers`, `ctx_size`, `batch_size`, `kv_cache_tipo`, `tok_s`) y los motivos de descarte quedan registrados permanentemente en la base de datos `guarida.db`.
-- **Reutilización instantánea:** Si el usuario vuelve a descargar el modelo o decide reutilizarlo para tareas en segundo plano (*batch*), el búnker aplica directamente la configuración afinada sin necesidad de recalibrar.
+### 5. Memoria de afinamiento en hardware
+Afinar un modelo en hardware modesto lleva tiempo. Cuando encontramos el punto dulce de capas GPU (`n_gpu_layers`), contexto y memoria, se guarda en `guarida.db`:
+- Si borras un archivo `.gguf` de 8 GB para hacer hueco en el disco, **la configuración afinada se queda guardada**.
+- Si vuelves a descargar ese modelo en el futuro, el búnker ya sabe exactamente cómo correrlo en tu máquina sin tener que repetir pruebas.
 
-### 6. Ecosistema de Herramientas Portables del Búnker
-El aprovisionamiento incluye todo el instrumental indispensable para que el agente opere con total autonomía fuera de línea:
-- **`llama-server`:** Motor de inferencia compilado con soporte nativo Vulkan o CPU.
-- **`git`:** Herramienta de control de versiones para la creación de *worktrees* aislados donde el Coder aplica y prueba parches.
-- **`ripgrep` (`rg`):** Motor de búsqueda ultra-rápido en código fuente para navegación sin sobrecargar el contexto.
+### 6. Herramientas portables
+El agente funciona desconectado gracias a herramientas locales (detecta las del sistema o las descarga en su carpeta):
+- **`llama-server`:** El motor de inferencia con soporte Vulkan/CPU.
+- **`git`:** Para crear ramas y *worktrees* aislados donde el agente prueba los parches sin tocar tu código principal.
+- **`ripgrep` (`rg`):** Para buscar en el código en milisegundos en vez de devorar tokens indexando archivos enteros.
 
-### 7. Gobernanza y Cumplimiento Normativo (EU AI Act)
-GuarIdA incorpora un motor de auditoría legal automática para usuarios en **España y la Unión Europea** basado en el **Reglamento (UE) 2024/1689 (EU AI Act)**:
-- Verificación del resumen público del conjunto de datos de entrenamiento (Art. 53(1)(d)).
-- Respeto a las directivas de derechos de autor y reservas de minería de datos (Directiva UE 2019/790).
-- Compatibilidad de licencias de código abierto (Apache-2.0, MIT).
-- **Gobernanza informativa no bloqueante:** La auditoría guía y previene riesgos, pero el usuario mantiene la libertad de instalar modelos personalizados o desalineados en su entorno privado.
+### 7. Auditoría legal y normativa (EU AI Act)
+Para saber qué metemos en la máquina, el catálogo revisa licencias y datos de entrenamiento según la ley europea de IA (Reglamento UE 2024/1689):
+- Muestra el estado legal y las fuentes públicas de entrenamiento.
+- **Es informativo, no restrictivo:** te avisa de la situación legal del modelo, pero no te impide usar lo que quieras en tu máquina.
 
-### 8. Criptografía Preparada para la Era Postcuántica (PQC-Ready)
-El almacenamiento local, la configuración y el estado del búnker se protegen mediante primitivas resistentes a la computación cuántica:
-- Derivación de claves basada en la función esponja **SHAKE-256** (FIPS 202) y **SHA3-512** (256 bits de seguridad cuántica simétrica).
-- Cifrado simétrico autenticado (*Encrypt-then-MAC*) para evitar ataques de manipulación o extracción futura (*harvest now, decrypt later*).
+### 8. Seguridad y cifrado
+El estado del búnker y los datos locales se aseguran con derivación SHAKE-256 / SHA3 y comprobaciones HMAC para evitar manipulaciones locales.
 
 ### 9. Decisiones de Arquitectura (ADRs)
 - [ADR 0001: Arquitectura Base y Gestor de Inferencia Local](docs/adr/0001-arquitectura-base-fase-1.md)
