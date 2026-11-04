@@ -1,0 +1,72 @@
+# ==========================================
+# Archivo de exclusión para indexación (.ignore)
+# Optimización de contexto y ahorro de tokens
+# ==========================================
+
+# Entornos y dependencias
+node_modules/
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.cargo/
+vendor/
+
+# Archivos de bloqueo (lockfiles)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+poetry.lock
+Cargo.lock
+
+# Compilados y artefactos
+dist/
+build/
+out/
+.next/
+.nuxt/
+target/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.gguf
+
+# Logs, bases de datos y volcados
+*.log
+logs/
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# Multimedia, documentos y comprimidos
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.webp
+*.pdf
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Metadatos de IDEs y control de versiones
+.git/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Auditoria rapida: Archivos estaticos > 500 lineas que no aportan contexto de codigo
+LICENSE
