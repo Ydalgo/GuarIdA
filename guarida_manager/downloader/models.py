@@ -1,12 +1,10 @@
-import hashlib
 import os
+import re
 import shutil
-import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
-
-from datetime import datetime, timezone
 
 from guarida_manager import DIRECTORIO_MODELOS
 from guarida_manager.cache import (
@@ -19,6 +17,41 @@ from guarida_manager.downloader.compliance import (
     GestorCumplimientoNormativo,
     RegionNormativa,
 )
+from guarida_manager.downloader.core import DescargadorSeguro
+
+
+def validar_repo_hf(repo: str) -> str:
+    """Valida y sanea el identificador del repositorio de Hugging Face."""
+    repo = repo.strip()
+    partes = repo.split("/")
+    if len(partes) != 2 or not partes[0] or not partes[1]:
+        raise ValueError(
+            f"Identificador de repositorio Hugging Face inválido: '{repo}'. Formato requerido: 'usuario_u_org/nombre_repo'"
+        )
+    for parte in partes:
+        if not re.match(r"^[a-zA-Z0-9_\-\.]+$", parte) or ".." in parte:
+            raise ValueError(f"Caracteres no permitidos o path traversal en repositorio Hugging Face: '{repo}'")
+    return repo
+
+
+def validar_filename_hf(filename: str) -> str:
+    """Valida y sanea el nombre de archivo del modelo GGUF evitando path traversal."""
+    filename = filename.strip()
+    if "/" in filename or "\\" in filename or ".." in filename or Path(filename).name != filename:
+        raise ValueError(f"Ruta o nombre de archivo sospechoso (intento de path traversal): '{filename}'")
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+\.gguf$", filename, re.IGNORECASE):
+        raise ValueError(f"Nombre de archivo de modelo no válido. Debe tener extensión .gguf: '{filename}'")
+    return filename
+
+
+def validar_revision_hf(revision: Optional[str]) -> str:
+    """Valida la revisión, rama o commit SHA de Hugging Face."""
+    if not revision or not revision.strip():
+        return "main"
+    rev = revision.strip()
+    if "/" in rev or "\\" in rev or ".." in rev or not re.match(r"^[a-zA-Z0-9_\-\.]+$", rev):
+        raise ValueError(f"Identificador de revisión no válido: '{rev}'")
+    return rev
 
 
 @dataclass(frozen=True)
@@ -38,6 +71,8 @@ class DefinicionModeloCatalogo:
     copyright_compliant: bool
     es_sin_censura: bool
     descripcion: str
+    sha256_esperado: Optional[str] = None
+    revision: str = "main"
 
 
 class CatalogoModelos:
@@ -272,24 +307,32 @@ class CatalogoModelos:
         training_summary_url: Optional[str] = None,
         es_sin_censura: bool = False,
         descripcion: str = "Modelo personalizado añadido por el usuario.",
+        sha256_esperado: Optional[str] = None,
+        revision: str = "main",
     ) -> DefinicionModeloCatalogo:
-        """Permite al usuario registrar cualquier modelo GGUF arbitrario de Hugging Face."""
+        """Permite al usuario registrar cualquier modelo GGUF arbitrario de Hugging Face validando entradas."""
+        repo_seguro = validar_repo_hf(repo_hf)
+        filename_seguro = validar_filename_hf(filename)
+        revision_segura = validar_revision_hf(revision)
+
         nuevo = DefinicionModeloCatalogo(
-            id=id_unico,
-            nombre_legible=nombre_legible,
-            categoria=categoria,
-            cuantizacion=cuantizacion,
-            idiomas_destacados=idiomas,
-            repo_hf=repo_hf.strip(),
-            filename=filename.strip(),
+            id=id_unico.strip(),
+            nombre_legible=nombre_legible.strip(),
+            categoria=categoria.strip(),
+            cuantizacion=cuantizacion.strip(),
+            idiomas_destacados=idiomas.strip(),
+            repo_hf=repo_seguro,
+            filename=filename_seguro,
             tamano_gb=tamano_gb,
             ram_minima_gb=round(tamano_gb * 1.5, 1),
             ram_recomendada_gb=round(tamano_gb * 2.5, 1),
-            licencia=licencia,
-            training_summary_url=training_summary_url,
+            licencia=licencia.strip(),
+            training_summary_url=training_summary_url.strip() if training_summary_url else None,
             copyright_compliant=True,
             es_sin_censura=es_sin_censura,
-            descripcion=descripcion,
+            descripcion=descripcion.strip(),
+            sha256_esperado=sha256_esperado.strip().lower() if sha256_esperado else None,
+            revision=revision_segura,
         )
         cls.MODELOS[id_unico] = nuevo
         return nuevo
@@ -331,9 +374,17 @@ class DescargadorModelos:
         modelo: DefinicionModeloCatalogo,
         region: RegionNormativa = RegionNormativa.ES_EU,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
+        permitir_inseguro: bool = False,
     ) -> Path:
         ruta_archivo_final = self.directorio_modelos / modelo.filename
-        ruta_archivo_parcial = self.directorio_modelos / f"{modelo.filename}.part"
+
+        # Limpiar posibles restos de versiones antiguas (.partial)
+        ruta_antigua_partial = self.directorio_modelos / f"{modelo.filename}.partial"
+        if ruta_antigua_partial.exists():
+            try:
+                ruta_antigua_partial.unlink()
+            except OSError:
+                pass
 
         def log(msg: str, pct: float = 0.0) -> None:
             if callback_progreso:
@@ -342,58 +393,37 @@ class DescargadorModelos:
                 print(f"[{pct:.1f}%] {msg}")
 
         if ruta_archivo_final.exists() and ruta_archivo_final.stat().st_size > 0:
-            log(f"El modelo ya está presente en el Búnker: {ruta_archivo_final.name}", 100.0)
+            if modelo.sha256_esperado:
+                hash_actual = calcular_sha256_archivo(ruta_archivo_final)
+                if not hmac.compare_digest(hash_actual.lower(), modelo.sha256_esperado.lower()):
+                    raise ValueError(
+                        f"Integridad comprometida en modelo existente {ruta_archivo_final.name}: "
+                        f"esperado {modelo.sha256_esperado}, actual {hash_actual}"
+                    )
+                log(f"El modelo ya está presente y verificado con SHA-256 en el Búnker: {ruta_archivo_final.name}", 100.0)
+            else:
+                log(f"El modelo ya está presente en el Búnker (sin hash SHA-256 verificado): {ruta_archivo_final.name}", 100.0)
             self._registrar_en_cache(modelo, str(ruta_archivo_final))
             return ruta_archivo_final
 
-        url_hf = f"https://huggingface.co/{modelo.repo_hf}/resolve/main/{modelo.filename}"
-        bytes_existentes = ruta_archivo_parcial.stat().st_size if ruta_archivo_parcial.exists() else 0
-
-        encabezados = {"User-Agent": "GuarIdA-Bunker-Downloader/1.0"}
-        modo_apertura = "wb"
-
-        if bytes_existentes > 0:
-            encabezados["Range"] = f"bytes={bytes_existentes}-"
-            modo_apertura = "ab"
-            log(f"Reanudando descarga de {modelo.filename} desde {bytes_existentes / (1024**2):.1f} MB...", 0.0)
-        else:
-            log(f"Iniciando descarga de {modelo.filename} ({modelo.tamano_gb:.2f} GB)...", 0.0)
-
-        peticion = urllib.request.Request(url_hf, headers=encabezados)
+        url_hf = f"https://huggingface.co/{modelo.repo_hf}/resolve/{modelo.revision}/{modelo.filename}"
 
         try:
-            with urllib.request.urlopen(peticion, timeout=30) as respuesta:
-                longitud_contenido = respuesta.headers.get("Content-Length")
-                tamano_total = (int(longitud_contenido) + bytes_existentes) if longitud_contenido else None
-
-                descargado = bytes_existentes
-                chunk_size = 128 * 1024
-                sha256_hasher = hashlib.sha256()
-
-                with open(ruta_archivo_parcial, modo_apertura) as f_out:
-                    while True:
-                        fragmento = respuesta.read(chunk_size)
-                        if not fragmento:
-                            break
-                        f_out.write(fragmento)
-                        sha256_hasher.update(fragmento)
-                        descargado += len(fragmento)
-
-                        if tamano_total:
-                            porcentaje = (descargado / tamano_total) * 100.0
-                            log(
-                                f"Descargando: {descargado / (1024**3):.2f} GB / {tamano_total / (1024**3):.2f} GB",
-                                porcentaje,
-                            )
-
-            if ruta_archivo_final.exists():
-                os.remove(ruta_archivo_final)
-            ruta_archivo_parcial.rename(ruta_archivo_final)
-
-            log(f"Modelo {modelo.filename} verificado e integrado.", 100.0)
+            DescargadorSeguro.descargar_archivo(
+                url=url_hf,
+                ruta_destino=ruta_archivo_final,
+                sha256_esperado=modelo.sha256_esperado,
+                permitir_reanudacion=True,
+                permitir_inseguro=permitir_inseguro,
+                callback_progreso=callback_progreso,
+                user_agent="GuarIdA-Bunker-Downloader/1.0",
+            )
+            if modelo.sha256_esperado:
+                log(f"Modelo {modelo.filename} verificado criptográficamente con SHA-256 e integrado.", 100.0)
+            else:
+                log(f"Modelo {modelo.filename} integrado (aviso: descargado sin hash SHA-256 verificado).", 100.0)
             self._registrar_en_cache(modelo, str(ruta_archivo_final))
             return ruta_archivo_final
-
         except Exception as e:
             log(f"Interrupción en la descarga de {modelo.filename}: {e}", 0.0)
             raise
@@ -403,6 +433,7 @@ class DescargadorModelos:
         cesta: CestaDescarga,
         region: RegionNormativa = RegionNormativa.ES_EU,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
+        permitir_inseguro: bool = False,
     ) -> list[Path]:
         """Descarga todos los modelos de la cesta informando del avance global."""
         rutas_descargadas = []
@@ -416,6 +447,7 @@ class DescargadorModelos:
                 modelo=mod,
                 region=region,
                 callback_progreso=callback_progreso,
+                permitir_inseguro=permitir_inseguro,
             )
             rutas_descargadas.append(ruta)
 

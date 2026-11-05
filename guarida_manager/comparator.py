@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from guarida_manager.cache import GestorCache
 from guarida_manager.hardware import obtener_informacion_hardware
 
 

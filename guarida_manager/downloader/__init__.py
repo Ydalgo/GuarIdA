@@ -6,8 +6,15 @@ from guarida_manager.downloader.compliance import (
     GestorCumplimientoNormativo,
     RegionNormativa,
 )
+from guarida_manager.downloader.core import DescargadorSeguro, MotorDescargasBunker
 from guarida_manager.downloader.crypto import BovedaCriptograficaPostcuantica
-from guarida_manager.downloader.models import CatalogoModelos, DescargadorModelos
+from guarida_manager.downloader.models import (
+    CatalogoModelos,
+    DescargadorModelos,
+    validar_filename_hf,
+    validar_repo_hf,
+    validar_revision_hf,
+)
 from guarida_manager.downloader.provisioning import OrquestadorAprovisionamiento
 from guarida_manager.downloader.tools import (
     DefinicionHerramienta,
@@ -16,6 +23,8 @@ from guarida_manager.downloader.tools import (
 )
 
 __all__ = [
+    "DescargadorSeguro",
+    "MotorDescargasBunker",
     "GestorBinariosLlama",
     "GestorCumplimientoNormativo",
     "EvaluacionCumplimiento",
@@ -23,6 +32,9 @@ __all__ = [
     "BovedaCriptograficaPostcuantica",
     "CatalogoModelos",
     "DescargadorModelos",
+    "validar_repo_hf",
+    "validar_filename_hf",
+    "validar_revision_hf",
     "OrquestadorAprovisionamiento",
     "GestorHerramientasBunker",
     "DefinicionHerramienta",

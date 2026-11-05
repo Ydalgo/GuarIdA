@@ -2,7 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from guarida_manager.downloader.crypto import BovedaCriptograficaPostcuantica
+from guarida_manager.downloader.crypto import (
+    BovedaCriptograficaPostcuantica,
+    SobreCriptografico,
+)
 
 
 class TestCrypto(unittest.TestCase):
@@ -11,11 +14,34 @@ class TestCrypto(unittest.TestCase):
         mensaje_original = "Configuración ultrasecreta del búnker offline."
 
         sobre = BovedaCriptograficaPostcuantica.cifrar_datos(mensaje_original, clave_maestra)
-        self.assertEqual(sobre.algoritmo, "PQC-SHAKE256-SHA3_512-V1")
+        self.assertEqual(sobre.algoritmo, BovedaCriptograficaPostcuantica.ALGORITMO_IDENTIFICADOR)
         self.assertNotEqual(sobre.datos_cifrados_b64, mensaje_original)
 
         descifrado = BovedaCriptograficaPostcuantica.descifrar_datos(sobre, clave_maestra)
         self.assertEqual(descifrado.decode("utf-8"), mensaje_original)
+
+    def test_compatibilidad_retrospectiva_v1(self):
+        clave = "clave_v1_test"
+        mensaje = "prueba de compatibilidad v1"
+        # Simular sobre V1
+        salt = bytes.fromhex("01" * 32)
+        nonce = bytes.fromhex("02" * 16)
+        material = BovedaCriptograficaPostcuantica.derivar_clave_postcuantica_v1(clave, salt + nonce, len(mensaje.encode("utf-8")) + 32)
+        keystream = material[:len(mensaje.encode("utf-8"))]
+        mac_key = material[len(mensaje.encode("utf-8")):]
+        cifrado = bytes(b ^ k for b, k in zip(mensaje.encode("utf-8"), keystream))
+        import base64, hmac, hashlib
+        mac = hmac.new(mac_key, salt + nonce + cifrado, hashlib.sha3_512).hexdigest()
+        sobre_v1 = SobreCriptografico(
+            version="1.0",
+            algoritmo="PQC-SHAKE256-SHA3_512-V1",
+            salt_hex=salt.hex(),
+            nonce_hex=nonce.hex(),
+            datos_cifrados_b64=base64.b64encode(cifrado).decode("ascii"),
+            mac_autenticacion_hex=mac,
+        )
+        recuperado = BovedaCriptograficaPostcuantica.descifrar_datos(sobre_v1, clave)
+        self.assertEqual(recuperado.decode("utf-8"), mensaje)
 
     def test_falla_autenticacion_si_clave_es_erronea(self):
         clave_correcta = "clave_bunker_1"
@@ -24,6 +50,21 @@ class TestCrypto(unittest.TestCase):
         sobre = BovedaCriptograficaPostcuantica.cifrar_datos("datos protegidos", clave_correcta)
         with self.assertRaises(ValueError):
             BovedaCriptograficaPostcuantica.descifrar_datos(sobre, clave_erronea)
+
+    def test_falla_autenticacion_si_sobre_esta_alterado(self):
+        clave = "clave_test_mac"
+        sobre = BovedaCriptograficaPostcuantica.cifrar_datos("datos confidenciales", clave)
+        # Alterar mac
+        sobre_alterado = SobreCriptografico(
+            version=sobre.version,
+            algoritmo=sobre.algoritmo,
+            salt_hex=sobre.salt_hex,
+            nonce_hex=sobre.nonce_hex,
+            datos_cifrados_b64=sobre.datos_cifrados_b64,
+            mac_autenticacion_hex="00" * 64,
+        )
+        with self.assertRaises(ValueError):
+            BovedaCriptograficaPostcuantica.descifrar_datos(sobre_alterado, clave)
 
     def test_cifrado_archivo_json(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

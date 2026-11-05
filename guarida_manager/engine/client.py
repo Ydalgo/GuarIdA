@@ -13,11 +13,22 @@ class ErrorInferenciaOffline(Exception):
 class ClienteLlamaOffline:
     """Cliente HTTP offline para interactuar con llama-server usando exclusivamente la libreria estandar."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8083, timeout: float = 60.0):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8083,
+        timeout: float = 60.0,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
         self.host = host
         self.port = port
         self.timeout = timeout
-        self.base_url = f"http://{host}:{port}"
+        self.api_key = api_key
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        else:
+            self.base_url = f"http://{host}:{port}"
 
     def _solicitud_http(
         self,
@@ -31,6 +42,9 @@ class ClienteLlamaOffline:
 
         cuerpo_bytes = None
         headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         if datos is not None:
             cuerpo_bytes = json.dumps(datos).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -120,6 +134,11 @@ class ClienteLlamaOffline:
         temperatura: float = 0.2,
         top_p: float = 0.95,
         stop: Optional[list[str]] = None,
+        cache_prompt: bool = False,
+        seed: Optional[int] = None,
+        ignore_eos: bool = False,
+        stream: bool = False,
+        **extra_kwargs: Any,
     ) -> dict[str, Any]:
         """Genera completado de texto crudo mediante el endpoint nativo /completion de llama.cpp."""
         payload: dict[str, Any] = {
@@ -127,11 +146,52 @@ class ClienteLlamaOffline:
             "n_predict": n_predict,
             "temperature": temperatura,
             "top_p": top_p,
+            "cache_prompt": cache_prompt,
+            "ignore_eos": ignore_eos,
+            "stream": stream,
         }
+        if seed is not None:
+            payload["seed"] = seed
         if stop:
             payload["stop"] = stop
+        payload.update(extra_kwargs)
 
         return self._solicitud_http("/completion", metodo="POST", datos=payload)
+
+    def medir_ttft_streaming(
+        self,
+        prompt: str,
+        seed: int = 42,
+        timeout: float = 60.0,
+    ) -> float:
+        """Mide en milisegundos el tiempo hasta el primer token emitido (TTFT) mediante streaming."""
+        import time
+
+        url = f"{self.base_url}/completion"
+        payload = {
+            "prompt": prompt,
+            "n_predict": 16,
+            "temperature": 0.0,
+            "cache_prompt": False,
+            "seed": seed,
+            "stream": True,
+        }
+        cuerpo = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        peticion = urllib.request.Request(url, data=cuerpo, headers=headers, method="POST")
+        inicio = time.perf_counter()
+        with urllib.request.urlopen(peticion, timeout=timeout) as resp:
+            for linea in resp:
+                linea_str = linea.decode("utf-8", errors="replace").strip()
+                if linea_str.startswith("data:"):
+                    contenido_json = linea_str[5:].strip()
+                    if contenido_json and contenido_json != "[DONE]":
+                        ttft_ms = (time.perf_counter() - inicio) * 1000.0
+                        return ttft_ms
+        return (time.perf_counter() - inicio) * 1000.0
 
     def tokenizar(self, contenido: str) -> list[int]:
         """Convierte una cadena de texto a su lista exacta de IDs de tokens mediante /tokenize."""

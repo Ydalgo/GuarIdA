@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guarida-manager"
+version = "0.2.0"
+description = "Gestor offline soberano para LLMs locales, herramientas portables y gobernanza técnica"
+authors = [
+    { name = "GuarIdA Team" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    "cryptography>=41.0.0",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7.0",
+    "mypy>=1.11.0",
+    "pytest>=7.0.0",
+    "pip-audit>=2.6.0",
+]
+pdf = [
+    "reportlab>=4.2.5",
+]
+web = [
+    "fastapi>=0.115.4",
+    "uvicorn>=0.32.0",
+]
+gui = [
+    "PyQt6>=6.7.1",
+]
+
+[project.scripts]
+guarida = "guarida_manager.menu:iniciar_menu"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["guarida_manager*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

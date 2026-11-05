@@ -15,6 +15,12 @@ class EstadoCumplimiento(str, Enum):
     NO_CONFORME = "NO_CONFORME"
 
 
+AVISO_DESCARGO_LEGAL = (
+    "Aviso informativo: Esta evaluación es de carácter técnico-automatizado preliminar. "
+    "No constituye dictamen ni asesoramiento jurídico formal vinculante."
+)
+
+
 @dataclass(frozen=True)
 class EvaluacionCumplimiento:
     region: RegionNormativa
@@ -25,7 +31,8 @@ class EvaluacionCumplimiento:
     detalles_transparencia: str
     detalles_copyright: str
     licencia: str
-    permite_descarga: bool = True  # Siempre True: la gobernanza es informativa, nunca un bloqueo total
+    permite_descarga: bool = True  # La gobernanza es informativa, nunca un bloqueo total
+    descargo_legal: str = AVISO_DESCARGO_LEGAL
 
 
 class GestorCumplimientoNormativo:

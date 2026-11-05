@@ -4,9 +4,17 @@ import hmac
 import json
 import os
 import secrets
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    TIENE_CRYPTOGRAPHY = True
+except ImportError:  # pragma: no cover
+    AESGCM = None  # type: ignore
+    TIENE_CRYPTOGRAPHY = False
 
 
 @dataclass(frozen=True)
@@ -22,24 +30,40 @@ class SobreCriptografico:
 class BovedaCriptograficaPostcuantica:
     """Bóveda de cifrado y autenticación para el almacenamiento local del Búnker GuarIdA.
 
-    Diseñada con preparación para la era postcuántica (PQC-Ready):
-      - Derivación de claves basada en la función esponja SHAKE-256 (FIPS 202) y SHA3-512.
-      - 256 bits de seguridad cuántica simétrica (resistente al algoritmo de Grover).
-      - Autenticación de integridad con MAC derivado de SHA3-512 para prevenir manipulación.
-      - Cifrado simétrico de flujo con keystream derivado de alta entropía.
+    Arquitectura criptográfica reforzada:
+      - Derivación KDF mediante scrypt (RFC 7914, N=131072 / 2^17, r=8, p=1) resistente a GPU/ASIC.
+      - Separación de dominios de clave postcuántica mediante función esponja SHAKE-256 (FIPS 202).
+      - Cifrado autenticado estándar AES-256-GCM (AEAD) con clave de 256 bits y nonce de 96 bits.
+      - Capa adicional de autenticación de cabecera con HMAC-SHA3-512.
     """
 
-    ALGORITMO_IDENTIFICADOR = "PQC-SHAKE256-SHA3_512-V1"
+    ALGORITMO_IDENTIFICADOR = "PQC-AES256GCM-SCRYPT-SHA3_512-V2"
+    ALGORITMO_IDENTIFICADOR_V1 = "PQC-SHAKE256-SHA3_512-V1"
 
     @classmethod
     def derivar_clave_postcuantica(
         cls, clave_maestra: str, salt: bytes, longitud_bytes: int = 64
     ) -> bytes:
-        """Deriva una clave de longitud arbitraria usando la función esponja SHAKE-256."""
+        """Deriva material de clave postcuántica usando scrypt (N=131072) combinado con SHAKE-256."""
+        material_base = hashlib.scrypt(
+            clave_maestra.encode("utf-8"),
+            salt=salt,
+            n=131072,
+            r=8,
+            p=1,
+            maxmem=256 * 1024 * 1024,
+            dklen=64,
+        )
+        esponja = hashlib.shake_256(material_base + b"::GuarIdA-PQC-DomainSeparation::" + salt)
+        return esponja.digest(longitud_bytes)
+
+    @classmethod
+    def derivar_clave_postcuantica_v1(
+        cls, clave_maestra: str, salt: bytes, longitud_bytes: int = 64
+    ) -> bytes:
+        """Derivación heredada V1 para compatibilidad retrospectiva."""
         semilla = clave_maestra.encode("utf-8") + salt
-        # Primera etapa: Absorción en SHA3-512
         h1 = hashlib.sha3_512(semilla).digest()
-        # Segunda etapa: Expansión de tasa variable mediante SHAKE-256 (Sponge function)
         esponja = hashlib.shake_256(h1 + salt)
         return esponja.digest(longitud_bytes)
 
@@ -51,28 +75,28 @@ class BovedaCriptograficaPostcuantica:
         else:
             datos_bytes = texto_plano
 
-        salt = secrets.token_bytes(32)   # 256 bits de salt
-        nonce = secrets.token_bytes(16)  # 128 bits de nonce
+        salt = secrets.token_bytes(32)  # 256 bits de salt
 
-        # Derivar 64 bytes: 32 bytes para keystream de cifrado y 32 bytes para autenticacion MAC
+        if not TIENE_CRYPTOGRAPHY or AESGCM is None:
+            raise RuntimeError("El cifrado de la Bóveda requiere obligatoriamente el motor AES-GCM ('cryptography').")
+
+        nonce = secrets.token_bytes(12)  # 96 bits nonce para AES-GCM
         material_clave = cls.derivar_clave_postcuantica(
             clave_maestra=clave_maestra,
             salt=salt + nonce,
-            longitud_bytes=len(datos_bytes) + 32,
+            longitud_bytes=64,
         )
+        k_enc = material_clave[:32]
+        k_mac = material_clave[32:64]
 
-        keystream = material_clave[: len(datos_bytes)]
-        mac_key = material_clave[len(datos_bytes) :]
-
-        # Cifrado XOR autenticado con keystream criptográfico derivado de SHAKE-256
-        cifrado = bytes(b ^ k for b, k in zip(datos_bytes, keystream))
-
-        # Generar código de autenticación de mensaje (MAC) con SHA3-512
-        mac = hmac.new(mac_key, salt + nonce + cifrado, hashlib.sha3_512).hexdigest()
+        aesgcm = AESGCM(k_enc)
+        cifrado = aesgcm.encrypt(nonce, datos_bytes, associated_data=salt)
+        mac = hmac.new(k_mac, salt + nonce + cifrado, hashlib.sha3_512).hexdigest()
+        algoritmo = cls.ALGORITMO_IDENTIFICADOR
 
         return SobreCriptografico(
-            version="1.0",
-            algoritmo=cls.ALGORITMO_IDENTIFICADOR,
+            version="2.0",
+            algoritmo=algoritmo,
             salt_hex=salt.hex(),
             nonce_hex=nonce.hex(),
             datos_cifrados_b64=base64.b64encode(cifrado).decode("ascii"),
@@ -86,21 +110,41 @@ class BovedaCriptograficaPostcuantica:
         nonce = bytes.fromhex(sobre.nonce_hex)
         cifrado = base64.b64decode(sobre.datos_cifrados_b64.encode("ascii"))
 
-        material_clave = cls.derivar_clave_postcuantica(
-            clave_maestra=clave_maestra,
-            salt=salt + nonce,
-            longitud_bytes=len(cifrado) + 32,
-        )
+        if sobre.algoritmo == cls.ALGORITMO_IDENTIFICADOR:
+            if not TIENE_CRYPTOGRAPHY or AESGCM is None:
+                raise RuntimeError("El sobre requiere el motor AES-GCM (paquete cryptography).")
+            material_clave = cls.derivar_clave_postcuantica(
+                clave_maestra=clave_maestra,
+                salt=salt + nonce,
+                longitud_bytes=64,
+            )
+            k_enc = material_clave[:32]
+            k_mac = material_clave[32:64]
 
-        keystream = material_clave[: len(cifrado)]
-        mac_key = material_clave[len(cifrado) :]
+            mac_calculado = hmac.new(k_mac, salt + nonce + cifrado, hashlib.sha3_512).hexdigest()
+            if not hmac.compare_digest(mac_calculado, sobre.mac_autenticacion_hex):
+                raise ValueError("Fallo de autenticación criptográfica: el sobre ha sido alterado o la clave es incorrecta.")
 
-        # Verificar integridad antes de descifrar (Encrypt-then-MAC)
-        mac_calculado = hmac.new(mac_key, salt + nonce + cifrado, hashlib.sha3_512).hexdigest()
-        if not hmac.compare_digest(mac_calculado, sobre.mac_autenticacion_hex):
-            raise ValueError("Fallo de autenticación criptográfica: el sobre ha sido alterado o la clave es incorrecta.")
+            try:
+                aesgcm = AESGCM(k_enc)
+                return aesgcm.decrypt(nonce, cifrado, associated_data=salt)
+            except Exception as e:
+                raise ValueError("Fallo de autenticación criptográfica: el sobre ha sido alterado o la clave es incorrecta.") from e
 
-        return bytes(c ^ k for c, k in zip(cifrado, keystream))
+        if sobre.algoritmo == cls.ALGORITMO_IDENTIFICADOR_V1:
+            material_clave = cls.derivar_clave_postcuantica_v1(
+                clave_maestra=clave_maestra,
+                salt=salt + nonce,
+                longitud_bytes=len(cifrado) + 32,
+            )
+            keystream = material_clave[: len(cifrado)]
+            mac_key = material_clave[len(cifrado) :]
+            mac_calculado = hmac.new(mac_key, salt + nonce + cifrado, hashlib.sha3_512).hexdigest()
+            if not hmac.compare_digest(mac_calculado, sobre.mac_autenticacion_hex):
+                raise ValueError("Fallo de autenticación criptográfica: el sobre ha sido alterado o la clave es incorrecta.")
+            return bytes(c ^ k for c, k in zip(cifrado, keystream))
+
+        raise ValueError(f"Algoritmo criptográfico no soportado o desconocido: '{sobre.algoritmo}'")
 
     @classmethod
     def cifrar_archivo_json(cls, ruta_origen: Path, ruta_destino: Path, clave_maestra: str) -> None:
@@ -109,19 +153,37 @@ class BovedaCriptograficaPostcuantica:
             contenido = f.read()
 
         sobre = cls.cifrar_datos(contenido, clave_maestra)
-        with open(ruta_destino, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "version": sobre.version,
-                    "algoritmo": sobre.algoritmo,
-                    "salt_hex": sobre.salt_hex,
-                    "nonce_hex": sobre.nonce_hex,
-                    "datos_cifrados_b64": sobre.datos_cifrados_b64,
-                    "mac_autenticacion_hex": sobre.mac_autenticacion_hex,
-                },
-                f,
-                indent=2,
-            )
+        payload = json.dumps(
+            {
+                "version": sobre.version,
+                "algoritmo": sobre.algoritmo,
+                "salt_hex": sobre.salt_hex,
+                "nonce_hex": sobre.nonce_hex,
+                "datos_cifrados_b64": sobre.datos_cifrados_b64,
+                "mac_autenticacion_hex": sobre.mac_autenticacion_hex,
+            },
+            indent=2,
+        )
+        ruta_destino.parent.mkdir(parents=True, exist_ok=True)
+        ruta_temp = None
+        try:
+            with tempfile.NamedTemporaryFile("w", dir=ruta_destino.parent, delete=False, encoding="utf-8") as f_temp:
+                f_temp.write(payload)
+                f_temp.flush()
+                os.fsync(f_temp.fileno())
+                ruta_temp = Path(f_temp.name)
+            try:
+                os.chmod(ruta_temp, 0o600)
+            except OSError:
+                pass
+            os.replace(ruta_temp, ruta_destino)
+            ruta_temp = None
+        finally:
+            if ruta_temp and ruta_temp.exists():
+                try:
+                    ruta_temp.unlink()
+                except OSError:
+                    pass
 
     @classmethod
     def descifrar_archivo_json(cls, ruta_cifrada: Path, clave_maestra: str) -> str:

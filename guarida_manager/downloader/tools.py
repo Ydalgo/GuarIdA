@@ -2,10 +2,6 @@ import os
 import platform
 import shutil
 import subprocess
-import tarfile
-import tempfile
-import urllib.request
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -16,6 +12,7 @@ from guarida_manager import (
     DIRECTORIO_HERRAMIENTAS,
 )
 from guarida_manager.cache import GestorCache
+from guarida_manager.downloader.core import DescargadorSeguro
 from guarida_manager.downloader.binaries import GestorBinariosLlama
 
 
@@ -29,6 +26,8 @@ class DefinicionHerramienta:
     nombre_binario_final: str
     url_win_x64: Optional[str] = None
     url_linux_x64: Optional[str] = None
+    sha256_win_x64: Optional[str] = None
+    sha256_linux_x64: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +63,7 @@ class GestorHerramientasBunker:
             # MinGit Portable para Windows (versión oficial ligera sin instalador)
             url_win_x64="https://github.com/git-for-windows/git/releases/download/v2.47.0.windows.2/MinGit-2.47.0.2-64-bit.zip",
             url_linux_x64=None,  # En Linux habitualmente forma parte del sistema base
+            sha256_win_x64="c4a5d3a2adda98b25fe59349733fca56b3843360b962dba5535282a9d8120b31",
         ),
         "ripgrep": DefinicionHerramienta(
             id="ripgrep",
@@ -74,29 +74,58 @@ class GestorHerramientasBunker:
             nombre_binario_final="rg.exe" if platform.system() == "Windows" else "rg",
             url_win_x64="https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip",
             url_linux_x64="https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz",
+            sha256_win_x64="d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1",
+            sha256_linux_x64="4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e",
         ),
     }
 
     @classmethod
     def resolver_ruta_ejecutable(cls, herramienta_id: str) -> Optional[Path]:
-        """Localiza el ejecutable de una herramienta en PATH del sistema o en el búnker."""
+        """Localiza el ejecutable de una herramienta en su carpeta aislada, en el búnker o en PATH."""
         herramienta = cls.HERRAMIENTAS.get(herramienta_id)
         if not herramienta:
             return None
 
         binario_nombre = herramienta.nombre_binario_final
+        dir_herramienta = DIRECTORIO_HERRAMIENTAS / herramienta_id
 
-        # 1. Comprobar directorio de herramientas del búnker
-        candidatos_locales = [
-            DIRECTORIO_HERRAMIENTAS / binario_nombre,
-            DIRECTORIO_HERRAMIENTAS / "cmd" / binario_nombre,  # Estructura habitual de MinGit
-            DIRECTORIO_HERRAMIENTAS / "bin" / binario_nombre,
-            DIRECTORIO_BINARIOS_GPU / binario_nombre,
-            DIRECTORIO_BINARIOS_CPU / binario_nombre,
-        ]
-        for c in candidatos_locales:
-            if c.exists() and os.access(c, os.X_OK if platform.system() != "Windows" else os.F_OK):
-                return c
+        # 1. Comprobar rutas específicas por herramienta
+        rutas_preferidas: list[Path] = []
+        if herramienta_id == "git":
+            rutas_preferidas.extend([
+                dir_herramienta / "cmd" / binario_nombre,
+                dir_herramienta / "bin" / binario_nombre,
+                DIRECTORIO_HERRAMIENTAS / "cmd" / binario_nombre,
+            ])
+        elif herramienta_id == "ripgrep":
+            rutas_preferidas.extend([
+                dir_herramienta / binario_nombre,
+                DIRECTORIO_HERRAMIENTAS / binario_nombre,
+            ])
+        elif herramienta_id == "llama-server":
+            rutas_preferidas.extend([
+                DIRECTORIO_BINARIOS_GPU / binario_nombre,
+                DIRECTORIO_BINARIOS_CPU / binario_nombre,
+            ])
+
+        for c in rutas_preferidas:
+            try:
+                if c.exists() and os.access(c, os.X_OK if platform.system() != "Windows" else os.F_OK):
+                    return c
+            except (OSError, PermissionError):
+                continue
+
+        try:
+            if dir_herramienta.exists():
+                candidatos_dir = sorted(dir_herramienta.rglob(binario_nombre))
+                for c in candidatos_dir:
+                    try:
+                        if c.exists() and os.access(c, os.X_OK if platform.system() != "Windows" else os.F_OK):
+                            return c
+                    except (OSError, PermissionError):
+                        continue
+        except (OSError, PermissionError):
+            pass
 
         # 2. Comprobar en el PATH global del sistema
         en_path = shutil.which(binario_nombre.replace(".exe", ""))
@@ -151,8 +180,9 @@ class GestorHerramientasBunker:
         cls,
         herramienta_id: str,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
+        gestor_cache: Optional[GestorCache] = None,
     ) -> Path:
-        """Descarga e integra una herramienta portable en el búnker."""
+        """Descarga e integra una herramienta portable en el búnker con inyección de caché."""
         def log(msg: str, pct: float = 0.0) -> None:
             if callback_progreso:
                 callback_progreso(msg, pct)
@@ -163,10 +193,19 @@ class GestorHerramientasBunker:
         if not herramienta:
             raise ValueError(f"Herramienta desconocida: {herramienta_id}")
 
+        ruta_existente = cls.resolver_ruta_ejecutable(herramienta_id)
+        if ruta_existente:
+            log(f"Herramienta {herramienta.nombre} ya disponible en: {ruta_existente}", 100.0)
+            return ruta_existente
+
         # Caso especial para llama-server
         if herramienta_id == "llama-server":
             perfil = GestorBinariosLlama.resolver_perfil_sistema()
-            return GestorBinariosLlama.descargar_y_desplegar(perfil=perfil, callback_progreso=callback_progreso)
+            return GestorBinariosLlama.descargar_y_desplegar(
+                perfil=perfil,
+                callback_progreso=callback_progreso,
+                gestor_cache=gestor_cache,
+            )
 
         sistema = platform.system()
         url = herramienta.url_win_x64 if sistema == "Windows" else herramienta.url_linux_x64
@@ -177,64 +216,45 @@ class GestorHerramientasBunker:
                 "Por favor, instala la herramienta mediante el gestor de paquetes de tu distribución."
             )
 
-        DIRECTORIO_HERRAMIENTAS.mkdir(parents=True, exist_ok=True)
+        dir_herramienta = DIRECTORIO_HERRAMIENTAS / herramienta_id
+        dir_herramienta.mkdir(parents=True, exist_ok=True)
         log(f"Iniciando descarga de {herramienta.nombre}...", 0.0)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(url).suffix or ".zip") as temp_file:
-            ruta_temporal = Path(temp_file.name)
+        nombre_archivo_temp = Path(url).name or f"{herramienta_id}.zip"
+        ruta_temporal = dir_herramienta / nombre_archivo_temp
+        sha256_esperado = herramienta.sha256_win_x64 if sistema == "Windows" else herramienta.sha256_linux_x64
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "GuarIdA-Tools-Installer/1.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                total_bytes_header = resp.headers.get("Content-Length")
-                total_bytes = int(total_bytes_header) if total_bytes_header else None
+            DescargadorSeguro.descargar_archivo(
+                url=url,
+                ruta_destino=ruta_temporal,
+                sha256_esperado=sha256_esperado,
+                callback_progreso=callback_progreso,
+                user_agent="GuarIdA-Tools-Installer/1.0",
+            )
 
-                descargado = 0
-                chunk_size = 64 * 1024
-
-                with open(ruta_temporal, "wb") as f_out:
-                    while True:
-                        chunk = resp.read(chunk_size)
-                        if not chunk:
-                            break
-                        f_out.write(chunk)
-                        descargado += len(chunk)
-                        if total_bytes:
-                            pct = (descargado / total_bytes) * 100.0
-                            log(f"Descargando {herramienta.nombre}: {descargado/(1024**2):.1f}/{total_bytes/(1024**2):.1f} MB", pct)
-
-            log(f"Descomprimiendo {herramienta.nombre} en {DIRECTORIO_HERRAMIENTAS}...", 90.0)
-
-            if ruta_temporal.suffix == ".zip":
-                with zipfile.ZipFile(ruta_temporal, "r") as zf:
-                    zf.extractall(DIRECTORIO_HERRAMIENTAS)
-            elif ".tar" in ruta_temporal.name:
-                with tarfile.open(ruta_temporal, "r:*") as tf:
-                    tf.extractall(DIRECTORIO_HERRAMIENTAS)
+            log(f"Descomprimiendo {herramienta.nombre} de forma segura en {dir_herramienta}...", 90.0)
+            DescargadorSeguro.extraer_archivo_seguro(ruta_temporal, dir_herramienta)
 
             ruta_resuelta = cls.resolver_ruta_ejecutable(herramienta_id)
-            if not ruta_resuelta:
-                # Si se descomprimió en una subcarpeta, mover binario a la raíz de tools
-                candidatos = list(DIRECTORIO_HERRAMIENTAS.rglob(herramienta.nombre_binario_final))
-                if candidatos:
-                    ruta_resuelta = candidatos[0]
 
             if not ruta_resuelta:
-                raise FileNotFoundError(f"No se encontró el binario {herramienta.nombre_binario_final} tras la extracción.")
+                raise FileNotFoundError(f"No se encontró el binario {herramienta.nombre_binario_final} tras la extracción en {dir_herramienta}.")
 
             if sistema != "Windows":
                 os.chmod(ruta_resuelta, 0o755)
 
-            # Registrar en la caché
-            GestorCache().registrar_modulo_instalado(f"tool-{herramienta_id}")
+            # Registrar en la caché con inyección de dependencias
+            cache = gestor_cache or GestorCache()
+            cache.registrar_modulo_instalado(f"tool-{herramienta_id}")
             log(f"Herramienta {herramienta.nombre} instalada con éxito en: {ruta_resuelta}", 100.0)
             return ruta_resuelta
 
         finally:
             if ruta_temporal.exists():
                 try:
-                    os.remove(ruta_temporal)
-                except Exception:
+                    ruta_temporal.unlink()
+                except OSError:
                     pass
 
 

@@ -167,13 +167,25 @@ Para saber qué metemos en la máquina, el catálogo revisa licencias y datos de
 ### 8. Seguridad y cifrado
 El estado del búnker y los datos locales se aseguran con derivación SHAKE-256 / SHA3 y comprobaciones HMAC para evitar manipulaciones locales.
 
-### 9. Decisiones de Arquitectura (ADRs)
+### 9. Afinador Empírico y Benchmarking Reproducible
+Sistema automatizado para optimizar el rendimiento de cualquier modelo sobre el hardware local:
+- **Descubrimiento de capacidades:** Detección dinámica de flags de `llama-server` y `llama-bench`.
+- **Búsqueda por etapas:** Exploración guiada ($ngl \to threads \to batch/ubatch \to kv/fa \to ctx$) con poda temprana en lugar de fuerza bruta.
+- **Batería de estrés estadístico:** Descarte de calentamientos, repeticiones adaptativas ($CV \le 5\%$) e intervalos de confianza bootstrap del 95% para TTFT y tok/s (prefill y decode).
+- **Control de variables y reproducibilidad:** Perfiles versionados en JSON con hash canónico, exportación a CSV/JSON y comparador objetivo entre modelos.
+- **Uso vía CLI:**
+  ```bash
+  python -m guarida_manager.tuning --modelo qwen2.5-coder-7b-q4 --perfil estandar --objetivo chat
+  ```
+
+### 10. Decisiones de Arquitectura (ADRs)
 - [ADR 0001: Arquitectura Base y Gestor de Inferencia Local](docs/adr/0001-arquitectura-base-fase-1.md)
 - [ADR 0002: Verificación Empírica y Prueba de Estrés de Memoria GPU/GTT](docs/adr/0002-verificacion-empirica-memoria-gpu.md)
 - [ADR 0003: Aprovisionamiento Único Offline, Gobernanza Regional y Seguridad Postcuántica](docs/adr/0003-aprovisionamiento-offline-gobernanza-postcuantica.md)
 - [ADR 0004: Arquitectura Multi-Rol Especializada, Aprovisionamiento Flexible y Comparador de Cuantizaciones](docs/adr/0004-arquitectura-multi-rol-aprovisionamiento-flexible.md)
 - [ADR 0005: Persistencia de Perfiles de Afinamiento Óptimo y Ecosistema de Herramientas Portables](docs/adr/0005-persistencia-afinamiento-optimo-y-herramientas-bunker.md)
 - [ADR 0006: Motor de Inferencia Local y Control de Procesos](docs/adr/0006-motor-inferencia-local-y-control-de-procesos.md)
+- [ADR 0007: Afinamiento Empírico y Benchmarking Reproducible](docs/adr/0007-afinamiento-empirico-y-benchmarking-reproducible.md)
 
 ## Licencia
 

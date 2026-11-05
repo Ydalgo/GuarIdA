@@ -1,66 +1,58 @@
-import importlib.util
-import json
-import subprocess
-import sys
-from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from guarida_manager import RUTA_CONFIG_PREDETERMINADA
+from guarida_manager import (
+    DIRECTORIO_MODELOS,
+    RUTA_CONFIG_PREDETERMINADA,
+)
 from guarida_manager.cache import GestorCache
 from guarida_manager.downloader.binaries import GestorBinariosLlama
 from guarida_manager.downloader.compliance import RegionNormativa
-from guarida_manager.downloader.crypto import BovedaCriptograficaPostcuantica
+from guarida_manager.downloader.config_store import (
+    ConfiguracionBunker,
+    guardar_configuracion_bunker,
+)
 from guarida_manager.downloader.models import (
     CatalogoModelos,
     CestaDescarga,
     DescargadorModelos,
 )
+from guarida_manager.downloader.packages import GestorPaquetesPython
 from guarida_manager.downloader.tools import GestorHerramientasBunker
 from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.roles import AsignacionRoles
 
 
-@dataclass
-class ConfiguracionBunker:
-    region: str
-    interfaz_preferida: str                   # "terminal", "web", "escritorio"
-    soporte_informes_pdf: bool
-    roles: dict[str, str]                     # Mapeo de roles a modelos
-    modelos_instalados: list[str]             # Todos los modelos descargados en lote
-    herramientas_instaladas: list[str]        # Herramientas listas (llama-server, git, ripgrep)
-    binario_inferencia_instalado: bool
-    cifrado_postcuantico_activo: bool
-    estado_bunker: str                        # "PENDIENTE_APROVISIONAMIENTO", "OFFLINE_COMPLETO"
-    fecha_aprovisionamiento: Optional[str] = None
-
-
 class OrquestadorAprovisionamiento:
     """Orquestador de aprovisionamiento único multirrol para funcionamiento 100% offline."""
 
-    PAQUETES_OPCIONALES = {
-        "pdf": "reportlab",
-        "web": "fastapi",
-        "escritorio": "PyQt6",
-    }
+    PAQUETES_OPCIONALES = GestorPaquetesPython.PAQUETES_OPCIONALES
+    PAQUETES_PINNED = GestorPaquetesPython.PAQUETES_PINNED
 
-    def __init__(self, ruta_config: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        ruta_config: Optional[Path] = None,
+        gestor_cache: Optional[GestorCache] = None,
+        directorio_modelos: Optional[Path] = None,
+    ) -> None:
         self.ruta_config = ruta_config or RUTA_CONFIG_PREDETERMINADA
-        self.cache = GestorCache()
+        self.cache = gestor_cache or GestorCache()
+        self.directorio_modelos = directorio_modelos or DIRECTORIO_MODELOS
 
     @staticmethod
     def verificar_paquete_python(nombre_modulo: str) -> bool:
-        return importlib.util.find_spec(nombre_modulo) is not None
+        import importlib
+        importlib.invalidate_caches()
+        return GestorPaquetesPython.verificar_paquete(nombre_modulo)
 
     @classmethod
-    def instalar_paquete_pip(cls, nombre_paquete: str) -> bool:
-        try:
-            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", nombre_paquete]
-            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
-            return True
-        except Exception:
-            return False
+    def instalar_paquete_pip(cls, nombre_paquete: str, permitir_pip_runtime: bool = True) -> bool:
+        """Instala dependencias mediante pip con versiones pineadas estrictas (S7)."""
+        return GestorPaquetesPython.instalar_paquete_pip(
+            nombre_paquete=nombre_paquete,
+            permitir_pip_runtime=permitir_pip_runtime,
+        )
 
     def ejecutar_aprovisionamiento_lote(
         self,
@@ -70,6 +62,7 @@ class OrquestadorAprovisionamiento:
         modelos_ids_lote: Optional[list[str]] = None,
         roles: Optional[AsignacionRoles] = None,
         clave_maestra_boveda: Optional[str] = None,
+        permitir_pip_runtime: bool = True,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
     ) -> ConfiguracionBunker:
         """Aprovisiona todo el búnker en una única sesión de conexión."""
@@ -87,26 +80,42 @@ class OrquestadorAprovisionamiento:
 
         # 2. Dependencias de Python para entorno offline
         if instalar_pdf and not self.verificar_paquete_python("reportlab"):
-            log("Instalando soporte para generación de informes PDF offline (reportlab)...", 5.0)
-            self.instalar_paquete_pip("reportlab")
+            if permitir_pip_runtime:
+                log("Instalando soporte para generación de informes PDF offline (reportlab)...", 5.0)
+                self.instalar_paquete_pip("reportlab", permitir_pip_runtime=True)
+            else:
+                log("Aviso: 'reportlab' no instalado y pip runtime está deshabilitado.", 5.0)
 
         if interfaz == "web" and not self.verificar_paquete_python("fastapi"):
-            log("Instalando dependencias de interfaz web offline (fastapi, uvicorn)...", 8.0)
-            self.instalar_paquete_pip("fastapi")
-            self.instalar_paquete_pip("uvicorn")
+            if permitir_pip_runtime:
+                log("Instalando dependencias de interfaz web offline (fastapi, uvicorn)...", 8.0)
+                self.instalar_paquete_pip("fastapi", permitir_pip_runtime=True)
+                self.instalar_paquete_pip("uvicorn", permitir_pip_runtime=True)
+            else:
+                log("Aviso: dependencias web no instaladas y pip runtime deshabilitado.", 8.0)
         elif interfaz == "escritorio" and not self.verificar_paquete_python("PyQt6"):
-            log("Instalando dependencias de interfaz gráfica offline (PyQt6)...", 8.0)
-            self.instalar_paquete_pip("PyQt6")
+            if permitir_pip_runtime:
+                log("Instalando dependencias de interfaz gráfica offline (PyQt6)...", 8.0)
+                self.instalar_paquete_pip("PyQt6", permitir_pip_runtime=True)
+            else:
+                log("Aviso: 'PyQt6' no instalado y pip runtime está deshabilitado.", 8.0)
 
         # 3. Descarga y verificación del ecosistema de herramientas (llama-server, git, ripgrep)
         log("Verificando herramientas del sistema y binarios del búnker...", 10.0)
         perfil_binario = GestorBinariosLlama.resolver_perfil_sistema()
-        GestorBinariosLlama.descargar_y_desplegar(
-            perfil=perfil_binario,
-            callback_progreso=lambda msg, p: log(f"Binario inferencia: {msg}", 10.0 + (p * 0.12)),
-        )
+        try:
+            GestorBinariosLlama.descargar_y_desplegar(
+                perfil=perfil_binario,
+                callback_progreso=lambda msg, p: log(f"Binario inferencia: {msg}", 10.0 + (p * 0.12)),
+                gestor_cache=self.cache,
+            )
+        except Exception as e:
+            log(f"Aviso: No se pudo desplegar automáticamente llama-server ({e}). Se requerirá binario local o compilación manual.", 22.0)
 
-        herramientas_listas = ["llama-server"]
+        herramientas_listas = []
+        if GestorHerramientasBunker.resolver_ruta_ejecutable("llama-server"):
+            herramientas_listas.append("llama-server")
+
         for h in GestorHerramientasBunker.verificar_todas_herramientas():
             if h.id == "llama-server":
                 continue
@@ -116,7 +125,7 @@ class OrquestadorAprovisionamiento:
             else:
                 log(f"Descargando herramienta portátil: {h.nombre}...", 24.0)
                 try:
-                    GestorHerramientasBunker.descargar_y_desplegar(h.id)
+                    GestorHerramientasBunker.descargar_y_desplegar(h.id, gestor_cache=self.cache)
                     herramientas_listas.append(h.id)
                 except Exception as e:
                     log(f"Advertencia: no se pudo desplegar automáticamente {h.nombre}: {e}", 24.0)
@@ -128,7 +137,10 @@ class OrquestadorAprovisionamiento:
             "bge-m3-q4",
         ]
 
-        descargador = DescargadorModelos()
+        descargador = DescargadorModelos(
+            directorio_modelos=self.directorio_modelos,
+            gestor_cache=self.cache,
+        )
         modelos_definiciones = []
         for mid in ids_a_descargar:
             def_m = CatalogoModelos.obtener_modelo(mid)
@@ -142,53 +154,52 @@ class OrquestadorAprovisionamiento:
         if not suficiente_disco:
             log(f"[ALERTA] Espacio en disco muy ajustado para la cesta ({libre_gb:.1f} GB libres).", 28.0)
 
-        # 5. Descarga de todos los modelos de la cesta
-        descargador.descargar_cesta(
-            cesta=cesta,
-            region=region,
-            callback_progreso=lambda msg, p: log(msg, 30.0 + (p * 0.65)),
-        )
+        # 5. Descarga de modelos de la cesta
+        modelos_descargados = []
+        try:
+            descargador.descargar_cesta(
+                cesta=cesta,
+                region=region,
+                callback_progreso=lambda msg, p: log(msg, 30.0 + (p * 0.65)),
+                permitir_inseguro=True,
+            )
+            modelos_descargados = [m.id for m in modelos_definiciones]
+        except Exception as e:
+            log(f"Advertencia durante descarga de cesta ({e}). Registrando modelos descargados...", 95.0)
+            modelos_descargados = [m.id for m in modelos_definiciones if (self.directorio_modelos / m.filename).exists()]
 
         # 6. Roles y sellado de configuración
         roles_obj = roles or AsignacionRoles()
         fecha_actual = datetime.now(timezone.utc).isoformat()
 
+        tiene_pdf = self.verificar_paquete_python("reportlab")
+        tiene_binario = bool(GestorHerramientasBunker.resolver_ruta_ejecutable("llama-server"))
+        tiene_git = "git" in herramientas_listas
+        todos_modelos = len(modelos_descargados) == len(modelos_definiciones)
+
+        if tiene_binario and tiene_git and todos_modelos:
+            estado_bunker = "OFFLINE_COMPLETO"
+        else:
+            estado_bunker = "PARCIALMENTE_APROVISIONADO"
+
         configuracion = ConfiguracionBunker(
             region=region.value,
             interfaz_preferida=interfaz,
-            soporte_informes_pdf=instalar_pdf,
+            soporte_informes_pdf=tiene_pdf,
             roles=roles_obj.resumen_roles(),
-            modelos_instalados=[m.id for m in modelos_definiciones],
+            modelos_instalados=modelos_descargados,
             herramientas_instaladas=herramientas_listas,
-            binario_inferencia_instalado=True,
+            binario_inferencia_instalado=tiene_binario,
             cifrado_postcuantico_activo=bool(clave_maestra_boveda),
-            estado_bunker="OFFLINE_COMPLETO",
+            estado_bunker=estado_bunker,
             fecha_aprovisionamiento=fecha_actual,
         )
 
-        self.ruta_config.parent.mkdir(parents=True, exist_ok=True)
-        datos_json = json.dumps(asdict(configuracion), indent=2, ensure_ascii=False)
-
-        if clave_maestra_boveda:
-            log("Cifrando configuración del búnker con bóveda postcuántica...", 98.0)
-            sobre = BovedaCriptograficaPostcuantica.cifrar_datos(datos_json, clave_maestra_boveda)
-            ruta_cifrada = self.ruta_config.with_suffix(".pqc.json")
-            with open(ruta_cifrada, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "version": sobre.version,
-                        "algoritmo": sobre.algoritmo,
-                        "salt_hex": sobre.salt_hex,
-                        "nonce_hex": sobre.nonce_hex,
-                        "datos_cifrados_b64": sobre.datos_cifrados_b64,
-                        "mac_autenticacion_hex": sobre.mac_autenticacion_hex,
-                    },
-                    f,
-                    indent=2,
-                )
-
-        with open(self.ruta_config, "w", encoding="utf-8") as f:
-            f.write(datos_json)
+        guardar_configuracion_bunker(
+            configuracion=configuracion,
+            ruta_config=self.ruta_config,
+            clave_maestra_boveda=clave_maestra_boveda,
+        )
 
         self.cache.registrar_modulo_instalado("bunker-offline-multirole")
         log("¡Aprovisionamiento multirrol finalizado! El búnker está listo para operar 100% desconectado.", 100.0)

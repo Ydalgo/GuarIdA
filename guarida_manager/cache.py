@@ -52,6 +52,10 @@ class ConfiguracionOptimaRegistro:
     fecha_afinamiento: str
     motivo_descarte_o_nota: Optional[str] = None
     es_recomendada: bool = True
+    threads: Optional[int] = None
+    ubatch_size: Optional[int] = None
+    flash_attn: Optional[int] = None
+    extra_args_json: Optional[str] = None
 
 
 class GestorCache:
@@ -147,6 +151,91 @@ class GestorCache:
                 ON configuraciones_optimas(modelo_id, hash_hardware);
                 """
             )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS capacidades_binario (
+                    sha256_binario TEXT PRIMARY KEY,
+                    version_build TEXT NOT NULL,
+                    flags_json TEXT NOT NULL,
+                    dispositivos_json TEXT NOT NULL,
+                    capacidades_completas_json TEXT NOT NULL,
+                    fecha TEXT NOT NULL
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bench_sesiones (
+                    id TEXT PRIMARY KEY,
+                    modelo_id TEXT NOT NULL,
+                    sha256_modelo TEXT NOT NULL,
+                    hash_hardware TEXT NOT NULL,
+                    sha256_binario TEXT NOT NULL,
+                    version_build TEXT NOT NULL,
+                    hash_perfil_barrido TEXT NOT NULL,
+                    hash_perfil_bateria TEXT NOT NULL,
+                    objetivo TEXT NOT NULL,
+                    estado TEXT NOT NULL,
+                    inicio TEXT NOT NULL,
+                    fin TEXT,
+                    FOREIGN KEY (modelo_id) REFERENCES modelos(id) ON DELETE CASCADE
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bench_configs (
+                    id TEXT PRIMARY KEY,
+                    sesion_id TEXT NOT NULL,
+                    hash_config TEXT NOT NULL,
+                    args_json TEXT NOT NULL,
+                    etapa TEXT NOT NULL,
+                    estado TEXT NOT NULL,
+                    error_resumen TEXT,
+                    mem_modelo_mb REAL DEFAULT 0.0,
+                    mem_kv_mb REAL DEFAULT 0.0,
+                    mem_compute_mb REAL DEFAULT 0.0,
+                    ram_pico_mb REAL DEFAULT 0.0,
+                    vram_pico_mb REAL DEFAULT 0.0,
+                    gtt_pico_mb REAL DEFAULT 0.0,
+                    score REAL DEFAULT 0.0,
+                    FOREIGN KEY (sesion_id) REFERENCES bench_sesiones(id) ON DELETE CASCADE
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bench_ejecuciones (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    config_id TEXT NOT NULL,
+                    escenario TEXT NOT NULL,
+                    rep INTEGER NOT NULL,
+                    es_calentamiento INTEGER NOT NULL DEFAULT 0,
+                    prompt_n INTEGER NOT NULL DEFAULT 0,
+                    predicted_n INTEGER NOT NULL DEFAULT 0,
+                    pp_tok_s REAL NOT NULL DEFAULT 0.0,
+                    tg_tok_s REAL NOT NULL DEFAULT 0.0,
+                    ttft_ms REAL NOT NULL DEFAULT 0.0,
+                    latencia_total_ms REAL NOT NULL DEFAULT 0.0,
+                    exito INTEGER NOT NULL DEFAULT 1,
+                    calidad_pct REAL DEFAULT 100.0,
+                    FOREIGN KEY (config_id) REFERENCES bench_configs(id) ON DELETE CASCADE
+                );
+                """
+            )
+            # Migración idempotente de columnas para configuraciones_optimas
+            try:
+                cols = [row[1] for row in conexion.execute("PRAGMA table_info(configuraciones_optimas);").fetchall()]
+                if "threads" not in cols:
+                    conexion.execute("ALTER TABLE configuraciones_optimas ADD COLUMN threads INTEGER;")
+                if "ubatch_size" not in cols:
+                    conexion.execute("ALTER TABLE configuraciones_optimas ADD COLUMN ubatch_size INTEGER;")
+                if "flash_attn" not in cols:
+                    conexion.execute("ALTER TABLE configuraciones_optimas ADD COLUMN flash_attn INTEGER;")
+                if "extra_args_json" not in cols:
+                    conexion.execute("ALTER TABLE configuraciones_optimas ADD COLUMN extra_args_json TEXT;")
+            except Exception:
+                pass
 
     def guardar_modelo(self, modelo: ModeloRegistro) -> None:
         with self.sesion() as conexion:
@@ -285,12 +374,14 @@ class GestorCache:
                 INSERT INTO configuraciones_optimas (
                     modelo_id, hash_hardware, n_gpu_layers, ctx_size,
                     batch_size, kv_cache_tipo, tok_s_medido, gtt_pico_mb,
-                    fecha_afinamiento, motivo_descarte_o_nota, es_recomendada
+                    fecha_afinamiento, motivo_descarte_o_nota, es_recomendada,
+                    threads, ubatch_size, flash_attn, extra_args_json
                 )
                 VALUES (
                     :modelo_id, :hash_hardware, :n_gpu_layers, :ctx_size,
                     :batch_size, :kv_cache_tipo, :tok_s_medido, :gtt_pico_mb,
-                    :fecha_afinamiento, :motivo_descarte_o_nota, :es_recomendada
+                    :fecha_afinamiento, :motivo_descarte_o_nota, :es_recomendada,
+                    :threads, :ubatch_size, :flash_attn, :extra_args_json
                 )
                 ON CONFLICT(modelo_id, hash_hardware) DO UPDATE SET
                     n_gpu_layers = excluded.n_gpu_layers,
@@ -301,7 +392,11 @@ class GestorCache:
                     gtt_pico_mb = excluded.gtt_pico_mb,
                     fecha_afinamiento = excluded.fecha_afinamiento,
                     motivo_descarte_o_nota = excluded.motivo_descarte_o_nota,
-                    es_recomendada = excluded.es_recomendada;
+                    es_recomendada = excluded.es_recomendada,
+                    threads = excluded.threads,
+                    ubatch_size = excluded.ubatch_size,
+                    flash_attn = excluded.flash_attn,
+                    extra_args_json = excluded.extra_args_json;
                 """,
                 {
                     "modelo_id": config.modelo_id,
@@ -315,6 +410,10 @@ class GestorCache:
                     "fecha_afinamiento": config.fecha_afinamiento,
                     "motivo_descarte_o_nota": config.motivo_descarte_o_nota,
                     "es_recomendada": 1 if config.es_recomendada else 0,
+                    "threads": config.threads,
+                    "ubatch_size": config.ubatch_size,
+                    "flash_attn": config.flash_attn,
+                    "extra_args_json": config.extra_args_json,
                 },
             )
 
