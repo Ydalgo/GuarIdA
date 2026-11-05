@@ -212,5 +212,17 @@ class TestLogger(unittest.TestCase):
             log.handlers.clear()
 
 
+class TestTelemetria(unittest.TestCase):
+    def test_captura_telemetria_y_formato(self):
+        from guarida_manager.telemetry import MonitorTelemetriaHardware
+        metricas = MonitorTelemetriaHardware.capturar_metricas()
+        self.assertGreaterEqual(metricas.cpu_pct, 0.0)
+        self.assertGreater(metricas.ram_total_gb, 0.0)
+        cadena = MonitorTelemetriaHardware.formatear_linea_telemetria()
+        self.assertIn("[TELEMETRÍA]", cadena)
+        self.assertIn("CPU:", cadena)
+        self.assertIn("RAM:", cadena)
+
+
 if __name__ == "__main__":
     unittest.main()

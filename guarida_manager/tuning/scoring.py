@@ -53,12 +53,12 @@ class EvaluadorScoring:
     ) -> float:
         """Calcula el score numérico normalizado según los pesos del objetivo."""
         metricas = cls.extraer_metricas_resumen(ejecuciones)
-        if metricas["exito_ratio"] < 1.0 or metricas["calidad_media"] < 80.0:
-            return 0.0
-
         tg = metricas["tg_stats"]["mediana"]
         pp = metricas["pp_stats"]["mediana"]
         ttft = metricas["ttft_stats"]["mediana"]
+
+        if tg <= 0.0 and pp <= 0.0:
+            return 0.0
 
         pesos = cls.PESOS_OBJETIVOS.get(objetivo.lower(), cls.PESOS_OBJETIVOS["equilibrado"])
 
@@ -68,14 +68,15 @@ class EvaluadorScoring:
         componente_ttft = (1000.0 / max(50.0, ttft)) * 20.0 if ttft > 0 else 0.0
         factor_memoria = 1.0 - min(0.3, (memoria_mb / 32768.0) * pesos.get("penalizacion_mem", 0.05))
         factor_ctx = (ctx_size / 4096.0) if "bonus_ctx" in pesos else 1.0
+        factor_calidad = max(0.5, (metricas.get("calidad_media", 100.0) / 100.0)) * max(0.5, metricas.get("exito_ratio", 1.0))
 
         score_base = (
             componente_tg * pesos.get("peso_tg", 0.45)
             + componente_pp * pesos.get("peso_pp", 0.25)
             + componente_ttft * pesos.get("peso_ttft", 0.25)
-        ) * factor_memoria * factor_ctx
+        ) * factor_memoria * factor_ctx * factor_calidad
 
-        return round(max(0.0, score_base), 2)
+        return round(max(0.01, score_base), 2)
 
     @classmethod
     def comparar_significancia(

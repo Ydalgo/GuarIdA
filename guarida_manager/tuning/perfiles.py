@@ -116,17 +116,19 @@ class GestorPerfilesTuning:
 
     @classmethod
     def obtener_perfil_bateria(cls, nombre: str = "estandar") -> PerfilBateria:
+        nombre_norm = nombre.lower().rstrip("aos") + "a" if nombre.lower() in ("rapido", "exhaustivo") else nombre.lower()
         predefinidos = {
             "rapida": PerfilBateria(
                 nombre="rapida",
-                descripcion="Batería corta con 2 repeticiones mínimas y escenarios clave.",
-                repeticiones_min=2,
-                repeticiones_max=3,
-                umbral_cv_pct=8.0,
-                calentamientos_descartados=1,
-                enfriamiento_segundos=0.5,
-                pp_tokens_lista=[512],
-                tg_predict_lista=[128],
+                descripcion="Batería corta con repeticiones mínimas y escenarios clave.",
+                repeticiones_min=1,
+                repeticiones_max=2,
+                umbral_cv_pct=10.0,
+                calentamientos_descartados=0,
+                enfriamiento_segundos=0.3,
+                escenarios_activos=["pp", "tg"],
+                pp_tokens_lista=[256],
+                tg_predict_lista=[64],
             ),
             "estandar": PerfilBateria(
                 nombre="estandar",

@@ -9,6 +9,8 @@ from typing import Any, Callable, Optional
 from guarida_manager.cache import ConfiguracionOptimaRegistro, GestorCache
 from guarida_manager.engine.server import LlamaServerConfig
 from guarida_manager.hardware import obtener_informacion_hardware
+from guarida_manager.logger import obtener_logger
+from guarida_manager.telemetry import MonitorTelemetriaHardware
 from guarida_manager.tuning.bateria import BateriaEstresLlama
 from guarida_manager.tuning.capacidades import CapacidadesBinario, DescubridorCapacidades
 from guarida_manager.tuning.ejecutor import EjecutorIntentoLlama, ResultadoIntentoConfig
@@ -19,6 +21,8 @@ from guarida_manager.tuning.perfiles import (
     calcular_hash_canonico_dict,
 )
 from guarida_manager.tuning.scoring import EvaluadorScoring
+
+logger = obtener_logger("tuning.buscador")
 
 
 class BuscadorAfinamientoEtapas:
@@ -48,8 +52,28 @@ class BuscadorAfinamientoEtapas:
         self.tiempo_inicio = 0.0
 
     def _notificar(self, mensaje: str, progreso: float = 0.0) -> None:
+        hora_actual = datetime.datetime.now().strftime("%H:%M:%S")
+        if self.tiempo_inicio > 0:
+            transcurrido = int(time.time() - self.tiempo_inicio)
+            minutos = transcurrido // 60
+            segundos = transcurrido % 60
+            transcurrido_str = f"{minutos:02d}:{segundos:02d}"
+
+            if 0.05 < progreso < 0.99:
+                eta_total = transcurrido / progreso
+                eta_restante = max(0, int(eta_total - transcurrido))
+                eta_str = f"{eta_restante // 60:02d}:{eta_restante % 60:02d}"
+            else:
+                eta_str = "--:--"
+            prefijo = f"[{hora_actual} | {transcurrido_str} | ETA: {eta_str}]"
+        else:
+            prefijo = f"[{hora_actual}]"
+
+        linea = f"{prefijo} [{progreso * 100:4.1f}%] {mensaje}" if progreso > 0 else f"{prefijo} {mensaje}"
         if self.callback_progreso:
-            self.callback_progreso(mensaje, progreso)
+            self.callback_progreso(linea, progreso)
+        else:
+            print(linea)
 
     def _presupuesto_agotado(self) -> bool:
         if self.perfil_barrido.presupuesto_minutos <= 0:
@@ -80,6 +104,7 @@ class BuscadorAfinamientoEtapas:
         flash_attn: bool,
         ctx_size: int,
         sesion_id: str,
+        progreso_etapa: float = 0.0,
     ) -> ResultadoIntentoConfig:
         """Valida compatibilidad, comprueba memoización/reanudación y ejecuta el intento."""
         args_dict = {
@@ -96,6 +121,17 @@ class BuscadorAfinamientoEtapas:
         if hash_cfg in self.memo_configs:
             return self.memo_configs[hash_cfg]
 
+        MonitorTelemetriaHardware.comprobar_y_aplicar_proteccion_termica(
+            callback_aviso=lambda msg: self._notificar(msg, progreso_etapa)
+        )
+        telemetria_str = MonitorTelemetriaHardware.formatear_linea_telemetria()
+
+        self._notificar(
+            f"-> Probando {etapa}: ngl={n_gpu_layers}, hilos={threads}, batch={batch_size}/{ubatch_size}, "
+            f"kv={kv_cache_tipo}, fa={flash_attn}, ctx={ctx_size}",
+            progreso_etapa,
+        )
+
         # Validar compatibilidad previa
         valido, motivo_err = DescubridorCapacidades.validar_compatibilidad_config(args_dict, self.capacidades)
         if not valido:
@@ -108,6 +144,7 @@ class BuscadorAfinamientoEtapas:
             )
             self._guardar_config_en_bd(sesion_id, res_invalido)
             self.memo_configs[hash_cfg] = res_invalido
+            self._notificar(f"   [INCOMPATIBLE]: {motivo_err}", progreso_etapa)
             return res_invalido
 
         cfg_server = LlamaServerConfig(
@@ -142,9 +179,19 @@ class BuscadorAfinamientoEtapas:
                 self.perfil_barrido.objetivo_scoring,
             )
             res.score = score
-            if score > self.mejor_score_global:
+            metricas = EvaluadorScoring.extraer_metricas_resumen(res.ejecuciones_crudo)
+            tg = metricas["tg_stats"]["mediana"]
+            pp = metricas["pp_stats"]["mediana"]
+            ttft = metricas["ttft_stats"]["mediana"]
+            self._notificar(
+                f"   [OK] TG: {tg:4.1f} tok/s | PP: {pp:4.1f} tok/s | TTFT: {ttft:4.0f} ms | Score: {score:5.2f} | {telemetria_str}",
+                progreso_etapa,
+            )
+            if self.mejor_resultado is None or score >= self.mejor_score_global:
                 self.mejor_score_global = score
                 self.mejor_resultado = res
+        else:
+            self._notificar(f"   [{res.estado.upper()}]: {res.error_resumen or 'Fallo durante el intento'}", progreso_etapa)
 
         self._guardar_config_en_bd(sesion_id, res)
         self.memo_configs[hash_cfg] = res
@@ -171,7 +218,7 @@ class BuscadorAfinamientoEtapas:
                         config_id,
                         sesion_id,
                         res.hash_config,
-                        json.dumps(res.args),
+                        json.dumps(res.args, default=str),
                         res.etapa,
                         res.estado,
                         res.error_resumen,
@@ -209,8 +256,8 @@ class BuscadorAfinamientoEtapas:
                             ejec.get("calidad_pct", 100.0),
                         ),
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Fallo al registrar config en BD SQLite: {e}", exc_info=True)
 
     def ejecutar_barrido_completo(self) -> Optional[ResultadoIntentoConfig]:
         """Ejecuta las etapas ordenadas: baseline -> ngl -> threads -> batch/ubatch -> flash-attn/kv -> ctx -> refinado top-K."""
@@ -260,7 +307,10 @@ class BuscadorAfinamientoEtapas:
             flash_attn=False,
             ctx_size=2048,
             sesion_id=sesion_id,
+            progreso_etapa=0.10,
         )
+        if res_base.estado == "ok" and self.mejor_resultado is None:
+            self.mejor_resultado = res_base
 
         # ETAPA 1: Búsqueda binaria de n_gpu_layers
         ngl_optimo = 0
@@ -270,7 +320,7 @@ class BuscadorAfinamientoEtapas:
             bajo, alto = 0, limite_capas_max
             mejor_ngl_res = res_base
 
-            while bajo <= alto and not self._presupuesto_agotado():
+            while bajo <= alto:
                 medio = (bajo + alto) // 2
                 res = self.probar_configuracion(
                     etapa="etapa_1_ngl",
@@ -282,6 +332,7 @@ class BuscadorAfinamientoEtapas:
                     flash_attn=False,
                     ctx_size=2048,
                     sesion_id=sesion_id,
+                    progreso_etapa=0.25,
                 )
                 if res.estado == "ok":
                     ngl_optimo = medio
@@ -289,9 +340,11 @@ class BuscadorAfinamientoEtapas:
                     bajo = medio + 1  # Intentar meter más capas
                 else:
                     alto = medio - 1  # Desbordó o falló, reducir capas
+                if self._presupuesto_agotado():
+                    break
 
             # Probar también un escalón inmediatamente inferior por overhead de GTT
-            if ngl_optimo > 4:
+            if ngl_optimo > 4 and not self._presupuesto_agotado():
                 self.probar_configuracion(
                     etapa="etapa_1_ngl_refinado",
                     n_gpu_layers=ngl_optimo - 2,
@@ -302,6 +355,7 @@ class BuscadorAfinamientoEtapas:
                     flash_attn=False,
                     ctx_size=2048,
                     sesion_id=sesion_id,
+                    progreso_etapa=0.30,
                 )
 
         # ETAPA 2: Optimización de Hilos
@@ -326,6 +380,7 @@ class BuscadorAfinamientoEtapas:
                 flash_attn=False,
                 ctx_size=2048,
                 sesion_id=sesion_id,
+                progreso_etapa=0.45,
             )
             if r.score > self.mejor_score_global:
                 hilos_optimos = h
@@ -348,6 +403,7 @@ class BuscadorAfinamientoEtapas:
                     flash_attn=False,
                     ctx_size=2048,
                     sesion_id=sesion_id,
+                    progreso_etapa=0.65,
                 )
                 if r.score > self.mejor_score_global:
                     b_opt, ub_opt = b, ub
@@ -371,6 +427,7 @@ class BuscadorAfinamientoEtapas:
                     flash_attn=fa,
                     ctx_size=2048,
                     sesion_id=sesion_id,
+                    progreso_etapa=0.80,
                 )
                 if r.score > self.mejor_score_global:
                     fa_opt, kv_opt = fa, kv
@@ -391,6 +448,7 @@ class BuscadorAfinamientoEtapas:
                 flash_attn=fa_opt,
                 ctx_size=c,
                 sesion_id=sesion_id,
+                progreso_etapa=0.90,
             )
             if r.estado == "ok":
                 ctx_opt = c

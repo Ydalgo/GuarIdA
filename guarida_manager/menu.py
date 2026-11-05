@@ -21,6 +21,7 @@ from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.memory_probe import ejecutar_prueba_estres_memoria
 from guarida_manager.roles import AsignacionRoles
 from guarida_manager.logger import inicializar_logging, obtener_logger, obtener_ultimas_lineas_log
+from guarida_manager.telemetry import MonitorTelemetriaHardware
 from guarida_manager.tuning.bateria import BateriaEstresLlama
 from guarida_manager.tuning.buscador import BuscadorAfinamientoEtapas
 from guarida_manager.tuning.capacidades import DescubridorCapacidades
@@ -35,10 +36,11 @@ def limpiar_pantalla() -> None:
 
 
 def mostrar_banner() -> None:
-    print("=" * 50)
+    print("=" * 65)
     print("           GUARIDA - BÚNKER DE IA LOCAL")
     print("   Entorno de Desarrollo Agéntico Local y Privado")
-    print("=" * 50)
+    print("=" * 65)
+    print(MonitorTelemetriaHardware.formatear_linea_telemetria())
     print()
 
 
@@ -495,7 +497,12 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
                 filas = menu_actions.obtener_modelos_locales(cache)
                 if not filas:
                     print("[!] No hay modelos descargados localmente.")
-                else:
+                    desc = input("¿Deseas abrir el catálogo para descargar un modelo ahora? (s/N): ").strip().lower()
+                    if desc == "s":
+                        opcion_catalogo_y_bunker(cache)
+                        filas = menu_actions.obtener_modelos_locales(cache)
+
+                if filas:
                     print("\nModelos disponibles:")
                     for idx, f in enumerate(filas, start=1):
                         print(f"  [{idx}] {f['id']} ({f['filename']})")
@@ -527,11 +534,12 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
                                     perfil_barrido=p_barrido,
                                     perfil_bateria=p_bateria,
                                     gestor_cache=cache,
-                                    callback_progreso=lambda msg, pct: print(f"[{pct*100:5.1f}%] {msg}"),
+                                    callback_progreso=lambda msg, pct: print(msg),
                                 )
                                 ganador = buscador.ejecutar_barrido_completo()
                                 if ganador and ganador.estado == "ok":
                                     print(f"\n[OK] ¡Afinamiento completado! Score ganador: {ganador.score}")
+                                    print(f"Configuración óptima guardada para '{m_sel['id']}'. Ya puedes arrancar el servidor con máxima aceleración.")
                                 else:
                                     print("\n[!] No se encontró configuración estable.")
                             except Exception as e:
@@ -545,8 +553,28 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
         elif sub == "3":
             cliente = obtener_cliente_llama()
             if not cliente.esta_disponible():
-                print("[!] El servidor no responde. Levántalo primero en el menú 6.")
-            else:
+                print("[!] El servidor de inferencia no está activo.")
+                arr = input("¿Deseas arrancarlo ahora con el modelo disponible para ejecutar la batería? (s/N): ").strip().lower()
+                if arr == "s":
+                    filas = menu_actions.obtener_modelos_locales(cache)
+                    if filas and binario:
+                        mod_sel = filas[0]
+                        gestor_srv = obtener_gestor_servidor(cache)
+                        clave_api = secrets.token_urlsafe(32)
+                        cfg_levantar = LlamaServerConfig.desde_afinamiento(
+                            modelo_path=Path(mod_sel["ruta_local"]),
+                            modelo_id=mod_sel["id"],
+                            binario_path=binario,
+                            gestor_cache=cache,
+                            api_key=clave_api,
+                        )
+                        cliente.api_key = clave_api
+                        print(f"Arrancando '{mod_sel['id']}' en puerto {cfg_levantar.port}...")
+                        gestor_srv.iniciar_servidor(cfg_levantar)
+                        import time
+                        time.sleep(2.5)
+
+            if cliente.esta_disponible():
                 try:
                     gestor_srv = obtener_gestor_servidor(cache)
                     estado_srv = gestor_srv.obtener_estado()
@@ -556,7 +584,7 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
                     bateria = BateriaEstresLlama(cliente, perfil_bat)
                     res = bateria.ejecutar_bateria_completa(ctx_size=ctx_actual)
                     stats = EvaluadorScoring.extraer_metricas_resumen(res)
-                    print(f"[OK] Resultados obtenidos ({len(res)} pruebas):")
+                    print(f"\n[OK] Resultados obtenidos ({len(res)} pruebas):")
                     print(f"  * Generación (TG):  {stats['tg_stats']['mediana']} tok/s (IC 95%: [{stats['tg_stats']['ic_inf']}, {stats['tg_stats']['ic_sup']}])")
                     print(f"  * Prefill (PP):     {stats['pp_stats']['mediana']} tok/s")
                     print(f"  * Primer token:     {stats['ttft_stats']['mediana']} ms")
@@ -578,7 +606,25 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
                 sid = input("\nIntroduce ID de sesión para ver tabla detallada (o Enter para volver): ").strip()
                 if sid:
                     generador_informes.imprimir_tabla_consola(sid)
-                    exp = input("¿Deseas exportar esta sesión a CSV y JSON? (s/N): ").strip().lower()
+                    resumen = generador_informes.obtener_resumen_sesion(sid)
+                    if resumen and resumen.get("configs"):
+                        print("--- RESUMEN DE PRUEBAS Y RECOMENDACIÓN ---")
+                        total_intentos = len(resumen["configs"])
+                        ok_count = sum(1 for c in resumen["configs"] if c["estado"] == "ok")
+                        fallos_count = total_intentos - ok_count
+                        print(f"Estado de la sesión: {resumen['sesion']['estado'].upper()}")
+                        print(f"Pruebas analizadas:  {total_intentos} ([OK]: {ok_count} | [FALLADOS/PODADOS]: {fallos_count})")
+                        if ok_count > 0:
+                            mejor = resumen["configs"][0]
+                            args = mejor["args"]
+                            print(f"[RECOMENDACIÓN]: Configuración viable encontrada (Score: {mejor['score']:.2f}).")
+                            print(f"  Parámetros: ngl={args.get('n_gpu_layers', 0)}, hilos={args.get('threads', 4)}, batch={args.get('batch_size', 512)}.")
+                            print("  Puedes ejecutar el perfil 'exhaustivo' si deseas afinar aún más al límite o usar directamente el servidor.")
+                        else:
+                            print("[RECOMENDACIÓN]: No se halló configuración estable. Se recomienda descargar una cuantización más compacta (Q4_K_S o Q3_K_M).")
+                        print("-" * 75)
+
+                    exp = input("\n¿Deseas exportar esta sesión a CSV y JSON? (s/N): ").strip().lower()
                     if exp == "s":
                         try:
                             rcsv, rjson = generador_informes.exportar_csv_y_json(sid)
