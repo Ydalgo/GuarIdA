@@ -699,6 +699,7 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
         print(f"[!] Error durante la ejecución de la prueba: {e}")
     finally:
         gestor_emb.detener_servidor()
+        gestor_srv.detener_servidor()
     input("\nPresiona [Enter] para continuar...")
 
 
@@ -748,6 +749,7 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
 
                         print(f"\nBuscando Punto Dulce para '{m_sel['id']}'...")
                         try:
+                            obtener_gestor_servidor(cache).detener_servidor()
                             buscador = BuscadorAfinamientoEtapas(
                                 modelo_path=Path(m_sel["ruta_local"]),
                                 modelo_id=m_sel["id"],

@@ -99,6 +99,28 @@ class BuscadorAfinamientoEtapas:
         }
         return calcular_hash_canonico_dict(claves_relevantes)
 
+    def _obtener_extra_args_gtt(self) -> list[str]:
+        args: list[str] = []
+        if self.capacidades.tiene_flag("-nkvo"):
+            args.append("-nkvo")
+        elif self.capacidades.tiene_flag("--no-kv-offload"):
+            args.append("--no-kv-offload")
+        if self.capacidades.tiene_flag("-lm"):
+            args.extend(["-lm", "none"])
+        elif self.capacidades.tiene_flag("--load-mode"):
+            args.extend(["--load-mode", "none"])
+        elif self.capacidades.tiene_flag("--no-mmap"):
+            args.append("--no-mmap")
+        return args
+
+    def _obtener_extra_args_cpu_puro(self) -> list[str]:
+        args = self._obtener_extra_args_gtt()
+        if self.capacidades.tiene_flag("--device"):
+            args.extend(["--device", "none"])
+        elif self.capacidades.tiene_flag("-dev"):
+            args.extend(["-dev", "none"])
+        return args
+
     def probar_configuracion(
         self,
         etapa: str,
@@ -153,6 +175,20 @@ class BuscadorAfinamientoEtapas:
             self._notificar(f"   [INCOMPATIBLE]: {motivo_err}", progreso_etapa)
             return res_invalido
 
+        # Calcular si el modelo supera la apertura GTT de la GPU (ej. 17.7 GB > 15.8 GB GTT en Windows)
+        tamano_modelo_gb = 0.0
+        try:
+            if self.modelo_path.exists():
+                tamano_modelo_gb = self.modelo_path.stat().st_size / (1024**3)
+        except OSError:
+            tamano_modelo_gb = 0.0
+        hw_info = obtener_informacion_hardware()
+        excede_gtt = tamano_modelo_gb > 0 and tamano_modelo_gb >= (hw_info.gtt_disponible_gb * 0.90)
+        extra_args_intento: list[str] = []
+        if excede_gtt:
+            # Evitar que Vulkan reserve el modelo entero de >16 GB en memoria host-pinned WDDM o desborde KV
+            extra_args_intento = self._obtener_extra_args_gtt()
+
         cfg_server = LlamaServerConfig(
             modelo_path=self.modelo_path,
             binario_path=Path(self.capacidades.ruta_binario),
@@ -165,6 +201,7 @@ class BuscadorAfinamientoEtapas:
             embedding=self.es_modelo_embedding,
             ubatch_size=ubatch_size if self.capacidades.soporta_ubatch else None,
             flash_attn=flash_attn if self.capacidades.soporta_flash_attn else False,
+            extra_args=extra_args_intento,
         )
 
         def _bateria(cliente) -> list[dict[str, Any]]:
@@ -177,6 +214,16 @@ class BuscadorAfinamientoEtapas:
             etapa=etapa,
             funcion_bateria=_bateria,
         )
+
+        # Si el modelo supera la GTT de Windows y falló en ngl=0 por host-pinning de Vulkan, reintentar desactivando dispositivo Vulkan
+        if excede_gtt and n_gpu_layers == 0 and res.estado in ("crash", "oom"):
+            cfg_server.extra_args = self._obtener_extra_args_cpu_puro()
+            res = self.ejecutor.ejecutar_intento(
+                config=cfg_server,
+                hash_config=hash_cfg,
+                etapa=etapa,
+                funcion_bateria=_bateria,
+            )
 
         if res.estado == "ok":
             score = EvaluadorScoring.calcular_score(
@@ -331,6 +378,9 @@ class BuscadorAfinamientoEtapas:
                 ),
             )
 
+        from guarida_manager.engine.server import GestorLlamaServer
+
+        GestorLlamaServer.terminar_procesos_huerfanos("llama-server")
         self._notificar("Iniciando afinamiento por etapas...", 0.05)
 
         # ETAPA 0: Baseline
@@ -359,9 +409,19 @@ class BuscadorAfinamientoEtapas:
 
         # ETAPA 1: Búsqueda binaria de n_gpu_layers (omitida en modelos de embeddings cooperativos)
         ngl_optimo = 0
-        if hw.tiene_aceleracion_gpu and not self.es_modelo_embedding:
+        if hw.tiene_aceleracion_gpu and not self.es_modelo_embedding and res_base.estado == "ok":
             self._notificar("Buscando capas en GPU (n_gpu_layers)...", 0.15)
-            limite_capas_max = 45  # Límite práctico general para modelos 7B-14B
+            tamano_gb = 0.0
+            try:
+                if self.modelo_path.exists():
+                    tamano_gb = self.modelo_path.stat().st_size / (1024**3)
+            except OSError:
+                tamano_gb = 0.0
+            if tamano_gb > 0 and tamano_gb >= (hw.gtt_disponible_gb * 0.90):
+                # Si el modelo supera la apertura GTT (ej. 17.7 GB > 15.8 GB GTT), limitar capas GPU para no agotar RAM/GTT
+                limite_capas_max = max(4, int(18 * (hw.gtt_disponible_gb * 0.55 / tamano_gb)))
+            else:
+                limite_capas_max = 45  # Límite práctico general para modelos 7B-14B
             bajo, alto = 0, limite_capas_max
             mejor_ngl_res = res_base
 

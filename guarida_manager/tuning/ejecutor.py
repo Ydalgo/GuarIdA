@@ -131,7 +131,7 @@ class EjecutorIntentoLlama:
         low = texto_log.lower()
         if "out of memory" in low or "cuda error: out of memory" in low or "ggml_backend_alloc_ctx_tensors: failed" in low or "vk::device::allocatememory" in low:
             return "oom", "Memoria insuficiente (OOM / alloc failed en GPU/VRAM)"
-        if "unknown argument" in low or "error: unknown option" in low or "unrecognized option" in low:
+        if any(k in low for k in ("unknown argument", "error: unknown option", "unrecognized option", "invalid argument", "error: invalid option")):
             return "flag_invalido", "Argumento o flag no soportado por el binario"
         if "failed to load model" in low or "error loading model" in low:
             return "crash", "Fallo al cargar pesos del modelo"
@@ -155,6 +155,10 @@ class EjecutorIntentoLlama:
         gestor = GestorLlamaServer()
 
         try:
+            # Asegurar que ningún proceso llama-server previo retenga RAM o VRAM antes de iniciar el intento
+            GestorLlamaServer.terminar_procesos_huerfanos("llama-server")
+            time.sleep(0.4)
+
             puerto = config.port if config.port != 8083 else encontrar_puerto_libre(config.host)
             config.port = puerto
 

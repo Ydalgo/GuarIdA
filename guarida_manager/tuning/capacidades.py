@@ -22,6 +22,7 @@ FLAGS_CANDIDATOS_EXPLORABLES = {
     "--cache-type-k", "--cache-type-v",
     "-fa", "--flash-attn",
     "--mlock", "--no-mmap",
+    "-lm", "--load-mode",
     "-np", "--parallel",
     "--cont-batching",
     "-nkvo", "--no-kv-offload",

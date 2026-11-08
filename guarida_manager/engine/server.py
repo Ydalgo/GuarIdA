@@ -21,6 +21,7 @@ FLAGS_PERMITIDOS_EXTRA_ARGS = {
     "--metrics", "--embedding", "--cont-batching",
     "--flash-attn", "-fa", "--mlock", "--no-mmap",
     "-nkvo", "--no-kv-offload",
+    "-lm", "--load-mode",
     "-sm", "--split-mode", "-mg", "-ts",
     "--device", "-dev",
     "--n-cpu-moe", "-ot",
@@ -168,6 +169,9 @@ class LlamaServerConfig:
                         extra = parsed_extra
                 except Exception:
                     pass
+            if excede_vram_gpu:
+                if "-nkvo" not in extra:
+                    extra.append("-nkvo")
             return cls(
                 modelo_path=modelo_path,
                 binario_path=binario_path,
@@ -342,8 +346,7 @@ class GestorLlamaServer:
                     proc.wait(timeout=2.0)
             except Exception:
                 pass
-        else:
-            self.terminar_procesos_huerfanos("llama-server")
+        self.terminar_procesos_huerfanos("llama-server")
 
         _SERVIDORES_ACTIVOS.discard(self)
         if self._archivo_log:
