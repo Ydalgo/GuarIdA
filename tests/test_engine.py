@@ -172,6 +172,32 @@ class TestClienteLlamaOffline(unittest.TestCase):
         with self.assertRaises(ErrorInferenciaOffline):
             self.cliente.obtener_salud()
 
+    def test_calcular_embedding_formatos(self):
+        # 1. Formato lista de diccionarios (llama-server estándar)
+        with patch.object(self.cliente, "_solicitud_http", return_value=[{"embedding": [0.1, 0.2, 0.3]}]) as m:
+            vec = self.cliente.calcular_embedding("test")
+            self.assertEqual(vec, [0.1, 0.2, 0.3])
+
+        # 2. Formato diccionario nativo
+        with patch.object(self.cliente, "_solicitud_http", return_value={"embedding": [0.4, 0.5]}):
+            vec = self.cliente.calcular_embedding("test")
+            self.assertEqual(vec, [0.4, 0.5])
+
+        # 3. Formato OpenAI data
+        with patch.object(self.cliente, "_solicitud_http", return_value={"data": [{"embedding": [0.6, 0.7]}]}):
+            vec = self.cliente.calcular_embedding("test")
+            self.assertEqual(vec, [0.6, 0.7])
+
+        # 4. Formato lista plana
+        with patch.object(self.cliente, "_solicitud_http", return_value=[0.8, 0.9]):
+            vec = self.cliente.calcular_embedding("test")
+            self.assertEqual(vec, [0.8, 0.9])
+
+        # 5. Formato 2D anidado de llama-server reciente ([{"index": 0, "embedding": [[...]]}])
+        with patch.object(self.cliente, "_solicitud_http", return_value=[{"index": 0, "embedding": [[0.11, 0.22, 0.33]]}]):
+            vec = self.cliente.calcular_embedding("test")
+            self.assertEqual(vec, [0.11, 0.22, 0.33])
+
 
 if __name__ == "__main__":
     unittest.main()

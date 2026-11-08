@@ -76,13 +76,15 @@ class GeneradorInformesTuning:
             print("-" * 90)
 
         exitosas = [c for c in configs if c["estado"] == "ok"]
-        print(f"RANKING TOP-{min(top_n, len(exitosas))} DE CONFIGURACIONES ÓPTIMAS:")
-        print(f"{'#':<3} {'NGL':<5} {'Ctx':<6} {'Batch/UB':<10} {'KV':<6} {'FA':<4} {'TG (tok/s)':<16} {'TTFT (ms)':<12} {'Mem(MB)':<9} {'Score':<7}")
-        print("-" * 90)
+        print(f"RANKING TOP-{min(top_n, len(exitosas))} DE CONFIGURACIONES ÓPTIMAS (PUNTO DULCE):")
+        print(f"{'#':<3} {'NGL':<5} {'Ctx':<6} {'Batch/UB':<10} {'KV':<5} {'FA':<3} {'PP Lectura(t/s)':<16} {'TG Creación(t/s)':<17} {'TTFT(ms)':<10} {'Mem(MB)':<8} {'Score':<6}")
+        print("-" * 98)
 
         for idx, c in enumerate(exitosas[:top_n], start=1):
             args = c["args"]
             stats = c["stats"]
+            pp = stats["pp_stats"]["mediana"]
+            pp_str = f"{pp:.1f}"
             tg = stats["tg_stats"]["mediana"]
             tg_ic = f"±{stats['tg_stats']['desv']}" if stats['tg_stats']['desv'] > 0 else ""
             tg_str = f"{tg:.1f} {tg_ic}"
@@ -93,10 +95,10 @@ class GeneradorInformesTuning:
             print(
                 f"{idx:<3} {args.get('n_gpu_layers', 0):<5} {args.get('ctx_size', 4096):<6} "
                 f"{args.get('batch_size', 512)}/{args.get('ubatch_size', 512):<5} "
-                f"{args.get('kv_cache_tipo', 'f16'):<6} {fa_str:<4} "
-                f"{tg_str:<16} {ttft:<12.1f} {mem_tot:<9.1f} {c['score']:<7.2f}"
+                f"{args.get('kv_cache_tipo', 'f16'):<5} {fa_str:<3} "
+                f"{pp_str:<16} {tg_str:<17} {ttft:<10.1f} {mem_tot:<8.1f} {c['score']:<6.2f}"
             )
-        print("=" * 90 + "\n")
+        print("=" * 98 + "\n")
 
     def exportar_csv_y_json(self, sesion_id: str) -> tuple[Path, Path]:
         datos = self.obtener_resumen_sesion(sesion_id)
@@ -171,6 +173,10 @@ class GeneradorInformesTuning:
             print("[!] No se encontró configuración válida en alguna de las sesiones.")
             return
 
+        pp_a = ganador_a["stats"]["pp_stats"]["mediana"]
+        pp_b = ganador_b["stats"]["pp_stats"]["mediana"]
+        delta_pp_pct = ((pp_b - pp_a) / pp_a * 100.0) if pp_a > 0 else 0.0
+
         tg_a = ganador_a["stats"]["tg_stats"]["mediana"]
         tg_b = ganador_b["stats"]["tg_stats"]["mediana"]
         delta_tg_pct = ((tg_b - tg_a) / tg_a * 100.0) if tg_a > 0 else 0.0
@@ -185,7 +191,8 @@ class GeneradorInformesTuning:
         print(f"Modelo A [{sesion_id_a[:8]}]: {s_a['modelo_id']}")
         print(f"Modelo B [{sesion_id_b[:8]}]: {s_b['modelo_id']}")
         print("-" * 70)
-        print(f"Velocidad Generación (TG):  A = {tg_a:.1f} tok/s  vs  B = {tg_b:.1f} tok/s  (Delta: {delta_tg_pct:+.1f}%)")
-        print(f"Latencia Primer Token (TTFT): A = {ttft_a:.1f} ms     vs  B = {ttft_b:.1f} ms     (Delta: {delta_ttft_pct:+.1f}%)")
-        print(f"Score Global Evaluado:       A = {ganador_a['score']}        vs  B = {ganador_b['score']}")
+        print(f"Velocidad Lectura (Prefill PP): A = {pp_a:.1f} tok/s  vs  B = {pp_b:.1f} tok/s  (Delta: {delta_pp_pct:+.1f}%)")
+        print(f"Velocidad Creación (Gen TG):    A = {tg_a:.1f} tok/s  vs  B = {tg_b:.1f} tok/s  (Delta: {delta_tg_pct:+.1f}%)")
+        print(f"Latencia Primer Token (TTFT):   A = {ttft_a:.1f} ms     vs  B = {ttft_b:.1f} ms     (Delta: {delta_ttft_pct:+.1f}%)")
+        print(f"Score Global Evaluado:          A = {ganador_a['score']}        vs  B = {ganador_b['score']}")
         print("=" * 70 + "\n")

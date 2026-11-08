@@ -52,12 +52,19 @@ def listar_perfiles_afinamiento(gestor_cache: GestorCache, hash_hw: str) -> None
 
 
 def obtener_modelos_locales(gestor_cache: GestorCache) -> list[dict]:
-    """Obtiene la lista de modelos con archivo descargado en disco."""
+    """Obtiene la lista de modelos con archivo descargado y existente en disco."""
     with gestor_cache.sesion() as conn:
         filas = conn.execute(
             "SELECT id, filename, ruta_local, estado FROM modelos WHERE ruta_local != '';"
         ).fetchall()
-    return [dict(f) for f in filas]
+    resultado = []
+    for f in filas:
+        d = dict(f)
+        ruta = Path(d["ruta_local"])
+        if ruta.exists() and ruta.is_file() and ruta.stat().st_size > 0:
+            d["tamano_mb"] = round(ruta.stat().st_size / (1024 * 1024), 1)
+            resultado.append(d)
+    return resultado
 
 
 def archivar_modelo(gestor_cache: GestorCache, mid_borrar: str) -> bool:

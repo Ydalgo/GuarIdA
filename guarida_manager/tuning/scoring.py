@@ -10,6 +10,7 @@ class EvaluadorScoring:
         "chat": {"peso_tg": 0.55, "peso_ttft": 0.30, "peso_pp": 0.15, "penalizacion_mem": 0.05},
         "batch": {"peso_tg": 0.35, "peso_ttft": 0.05, "peso_pp": 0.60, "penalizacion_mem": 0.02},
         "agente_contexto_largo": {"peso_tg": 0.40, "peso_ttft": 0.20, "peso_pp": 0.25, "bonus_ctx": 0.15},
+        "coder_ast": {"peso_tg": 0.50, "peso_ttft": 0.35, "peso_pp": 0.15, "penalizacion_mem": 0.10, "bonus_ast": 0.20},
         "equilibrado": {"peso_tg": 0.45, "peso_ttft": 0.25, "peso_pp": 0.25, "penalizacion_mem": 0.05},
     }
 
@@ -35,12 +36,27 @@ class EvaluadorScoring:
         exito_ratio = len(validas) / len(total_no_calentamiento) if total_no_calentamiento else 0.0
         calidad_media = sum(calidades) / len(calidades) if calidades else 100.0
 
+        comparativa_arbol = next(
+            (e.get("comparativa") for e in validas if e.get("escenario") == "arbol_nodos_comparativa"),
+            None,
+        )
+        emb_ejecuciones = [e for e in validas if e.get("escenario") == "embedding"]
+        emb_stats = None
+        if emb_ejecuciones:
+            emb_stats = {
+                "embeddings_por_s": emb_ejecuciones[0].get("embeddings_por_s", 0.0),
+                "dimensiones_vector": emb_ejecuciones[0].get("dimensiones_vector", 0),
+                "latencia_media_ms": emb_ejecuciones[0].get("ttft_ms", 0.0),
+            }
+
         return {
             "tg_stats": calcular_estadisticas_serie(tg_vals),
             "pp_stats": calcular_estadisticas_serie(pp_vals),
             "ttft_stats": calcular_estadisticas_serie(ttft_vals),
             "exito_ratio": round(exito_ratio, 2),
             "calidad_media": round(calidad_media, 2),
+            "comparativa_arbol": comparativa_arbol,
+            "embedding_stats": emb_stats,
         }
 
     @classmethod
@@ -70,11 +86,17 @@ class EvaluadorScoring:
         factor_ctx = (ctx_size / 4096.0) if "bonus_ctx" in pesos else 1.0
         factor_calidad = max(0.5, (metricas.get("calidad_media", 100.0) / 100.0)) * max(0.5, metricas.get("exito_ratio", 1.0))
 
+        factor_ast = 1.0
+        comp_ast = metricas.get("comparativa_arbol")
+        if comp_ast and "bonus_ast" in pesos:
+            ahorro = float(comp_ast.get("ahorro_tokens_pct", 0.0)) / 100.0
+            factor_ast = 1.0 + (ahorro * pesos["bonus_ast"])
+
         score_base = (
             componente_tg * pesos.get("peso_tg", 0.45)
             + componente_pp * pesos.get("peso_pp", 0.25)
             + componente_ttft * pesos.get("peso_ttft", 0.25)
-        ) * factor_memoria * factor_ctx * factor_calidad
+        ) * factor_memoria * factor_ctx * factor_calidad * factor_ast
 
         return round(max(0.01, score_base), 2)
 

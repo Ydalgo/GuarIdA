@@ -74,8 +74,8 @@ Conclusiones de la comparativa:
 ## Hoja de ruta
 
 - [x] **Fase 1: Base de hardware, diagnóstico y aprovisionamiento offline** (detección GPU/GTT, caché SQLite, herramientas del búnker y perfiles afinados).
-- [x] **Fase 2: Motor de inferencia local y control de procesos** (levantamiento autónomo de `llama-server` con perfiles de SQLite, cliente HTTP 100% offline, endpoints `/health`, `/slots`, `/tokenize` y chat).
-- [ ] **Fase 3: Arnés de agentes y roles** (orquestación en bucles iterativos, árboles de nodos, embeddings y parches en worktrees de Git).
+- [x] **Fase 2: Motor de inferencia local, Punto Dulce y Árbol de Nodos AST** (levantamiento autónomo de `llama-server` con perfiles óptimos de SQLite, afinador empírico por etapas, indexación AST + compresión BPE + búsqueda híbrida RRF y comparativa cara a cara `Qwen2.5` vs `Qwen3`).
+- [ ] **Fase 3: Arnés de agentes y roles** (orquestación autónoma en bucles iterativos y aplicación de parches en worktrees de Git).
 - [ ] **Fase 4: Aislamiento del sistema** (sandboxing de herramientas a nivel de sistema operativo).
 
 ## Instalación y Uso (Entorno de desarrollo)
@@ -167,15 +167,18 @@ Para saber qué metemos en la máquina, el catálogo revisa licencias y datos de
 ### 8. Seguridad y cifrado
 El estado del búnker y los datos locales se aseguran con derivación SHAKE-256 / SHA3 y comprobaciones HMAC para evitar manipulaciones locales.
 
-### 9. Afinador Empírico y Benchmarking Reproducible
-Sistema automatizado para optimizar el rendimiento de cualquier modelo sobre el hardware local:
+### 9. Afinador Empírico, Punto Dulce y Árbol de Nodos AST (Compresión BPE + KV Cache)
+Sistema automatizado para encontrar el **Punto Dulce** de cualquier modelo sobre el hardware local y acelerar la inferencia de código mediante poda sintáctica AST:
 - **Descubrimiento de capacidades:** Detección dinámica de flags de `llama-server` y `llama-bench`.
-- **Búsqueda por etapas:** Exploración guiada ($ngl \to threads \to batch/ubatch \to kv/fa \to ctx$) con poda temprana en lugar de fuerza bruta.
-- **Batería de estrés estadístico:** Descarte de calentamientos, repeticiones adaptativas ($CV \le 5\%$) e intervalos de confianza bootstrap del 95% para TTFT y tok/s (prefill y decode).
-- **Control de variables y reproducibilidad:** Perfiles versionados en JSON con hash canónico, exportación a CSV/JSON y comparador objetivo entre modelos.
+- **Búsqueda por etapas con guardado progresivo en SQLite:** Exploración guiada ($ngl \to threads \to batch/ubatch \to kv/fa \to ctx$) que persiste la mejor configuración parcial en `configuraciones_optimas` y `bench_configs` (reportando velocidad de lectura `PP tok/s`, velocidad de creación `TG tok/s` y contexto máximo estable).
+- **Árbol de Nodos AST + Compresión BPE + Búsqueda Híbrida RRF (`guarida_manager/arbol_nodos.py`):** Descompone archivos de código en nodos sintácticos (`MODULO`, `CLASE`, `FUNCION`, `METODO`), indexa embeddings con caché `SHA-256`, fusiona similitud coseno con símbolos AST (RRF) y construye un esqueleto minificado consciente de BPE reutilizando la caché KV (`cache_prompt=True`).
+- **Resultados empíricos medidos en Intel Core i5-1135G7 + Iris Xe (`qwen2.5-coder-7b` + `nomic-embed-text-v1.5`):**
+  - **Ahorro de tokens:** de `629` a `164 tokens` (**73.93% de ahorro / `3.84x` menos tokens**).
+  - **Aceleración (Speedup):** latencia reducida de `8363 ms` a `3193 ms` (**`2.62x` más rápido**).
+  - **Calidad técnica:** incremento del `75.0%` al **`87.5%`** al eliminar ruido contextual.
 - **Uso vía CLI:**
   ```bash
-  python -m guarida_manager.tuning --modelo qwen2.5-coder-7b-q4 --perfil estandar --objetivo chat
+  python -m guarida_manager.tuning --modelo qwen2.5-coder-7b-q4 --perfil rapido --objetivo coder_ast
   ```
 
 ### 10. Decisiones de Arquitectura (ADRs)
@@ -186,6 +189,8 @@ Sistema automatizado para optimizar el rendimiento de cualquier modelo sobre el 
 - [ADR 0005: Persistencia de Perfiles de Afinamiento Óptimo y Ecosistema de Herramientas Portables](docs/adr/0005-persistencia-afinamiento-optimo-y-herramientas-bunker.md)
 - [ADR 0006: Motor de Inferencia Local y Control de Procesos](docs/adr/0006-motor-inferencia-local-y-control-de-procesos.md)
 - [ADR 0007: Afinamiento Empírico y Benchmarking Reproducible](docs/adr/0007-afinamiento-empirico-y-benchmarking-reproducible.md)
+- [ADR 0008: Adopción Selectiva de Capacidades Maya (Inspección GGUF, Caché y Telemetría)](docs/adr/0008-adopcion-capacidades-maya-inspeccion-gguf-cache-y-telemetria.md)
+- [ADR 0009: Árbol de Nodos AST, Compresión BPE, Búsqueda Híbrida RRF y Comparativa Cara a Cara](docs/adr/0009-arbol-nodos-ast-compresion-bpe-y-comparativa-modelos.md)
 
 ## Licencia
 

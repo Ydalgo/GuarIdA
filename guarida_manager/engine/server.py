@@ -145,7 +145,17 @@ class LlamaServerConfig:
         # Hilos por defecto: nucleos fisicos si estan disponibles
         hilos = info_hw.nucleos_fisicos if info_hw.nucleos_fisicos > 0 else 4
 
-        if optima:
+        # Calcular tamaño físico del modelo para proteger contra OOM en Vulkan/iGPU
+        tamano_gb = 0.0
+        try:
+            if modelo_path.exists() and modelo_path.is_file():
+                tamano_gb = modelo_path.stat().st_size / (1024**3)
+        except OSError:
+            tamano_gb = 0.0
+
+        excede_vram_gpu = tamano_gb > 0 and tamano_gb > info_hw.gtt_disponible_gb
+
+        if optima and not excede_vram_gpu:
             hilos_opt = optima.get("threads") or hilos
             ubatch = optima.get("ubatch_size")
             fa = bool(optima.get("flash_attn", 0))
@@ -175,20 +185,39 @@ class LlamaServerConfig:
                 extra_args=extra,
             )
 
-        # Fallback si no hay afinamiento registrado para este hardware
-        ngl_por_defecto = 33 if info_hw.tiene_aceleracion_gpu else 0
+        vram_util_gb = max(0.0, info_hw.gtt_disponible_gb - 1.5)
+        extra_fallback: list[str] = []
+        if not info_hw.tiene_aceleracion_gpu:
+            ngl_por_defecto = 0
+            ctx_def, batch_def, ubatch_def, kv_def = 2048, 256, 256, "q8_0"
+        elif excede_vram_gpu:
+            # Modelo mayor que la memoria GTT de la GPU (ej. 30B MoE de 17.7 GB en iGPU de 8 GB):
+            # forzar CPU (-ngl 0 -nkvo) para evitar vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+            ngl_por_defecto = 0
+            ctx_def, batch_def, ubatch_def, kv_def = 2048, 256, 128, "q8_0"
+            extra_fallback = ["-nkvo"]
+        elif tamano_gb > 0 and tamano_gb > vram_util_gb:
+            proporcion = max(0.15, min(0.85, vram_util_gb / tamano_gb))
+            ngl_por_defecto = max(4, int(32 * proporcion))
+            ctx_def, batch_def, ubatch_def, kv_def = 2048, 256, 256, "q8_0"
+        else:
+            ngl_por_defecto = 33
+            ctx_def, batch_def, ubatch_def, kv_def = 4096, 512, 512, "f16"
+
         return cls(
             modelo_path=modelo_path,
             binario_path=binario_path,
             host=host,
             port=port,
             n_gpu_layers=ngl_por_defecto,
-            ctx_size=4096,
-            batch_size=512,
+            ctx_size=ctx_def,
+            batch_size=batch_def,
+            ubatch_size=ubatch_def,
             threads=hilos,
-            kv_cache_type="f16",
+            kv_cache_type=kv_def,
             alias=modelo_id,
             api_key=api_key,
+            extra_args=extra_fallback,
         )
 
 
@@ -281,47 +310,52 @@ class GestorLlamaServer:
             "api_key_configurada": bool(config.api_key),
         }
 
-    def detener_servidor(self, timeout: float = 5.0) -> bool:
-        """Detiene de forma limpia el proceso llama-server y cierra descriptores de log."""
-        if not self.esta_activo():
-            if self._archivo_log:
-                try:
-                    self._archivo_log.close()
-                except Exception:
-                    pass
-                self._archivo_log = None
-            self._proceso = None
-            self._config_activa = None
-            self._timestamp_inicio = None
-            return True
-
-        proc = self._proceso
-        exito = False
+    @staticmethod
+    def terminar_procesos_huerfanos(nombre: str = "llama-server") -> int:
+        """Localiza y termina procesos llama-server huérfanos en segundo plano."""
         try:
-            proc.terminate()
+            import psutil
+        except ImportError:
+            return 0
+        terminados = 0
+        for proc in psutil.process_iter(["pid", "name"]):
             try:
-                proc.wait(timeout=timeout)
-                exito = True
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2.0)
-                exito = True
-        except Exception:
-            exito = False
-        finally:
-            if exito:
-                _SERVIDORES_ACTIVOS.discard(self)
-                if self._archivo_log:
-                    try:
-                        self._archivo_log.close()
-                    except Exception:
-                        pass
-                    self._archivo_log = None
-                self._proceso = None
-                self._config_activa = None
-                self._timestamp_inicio = None
+                nombre_p = proc.info.get("name") or ""
+                if nombre.lower() in nombre_p.lower():
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                    terminados += 1
+            except Exception:
+                pass
+        return terminados
 
-        return exito
+    def detener_servidor(self, timeout: float = 5.0) -> bool:
+        """Detiene de forma limpia el proceso llama-server y limpia procesos huérfanos."""
+        if self._proceso:
+            proc = self._proceso
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+            except Exception:
+                pass
+        else:
+            self.terminar_procesos_huerfanos("llama-server")
+
+        _SERVIDORES_ACTIVOS.discard(self)
+        if self._archivo_log:
+            try:
+                self._archivo_log.close()
+            except Exception:
+                pass
+            self._archivo_log = None
+        self._proceso = None
+        self._config_activa = None
+        self._timestamp_inicio = None
+        return True
 
     def obtener_estado(self) -> dict[str, Any]:
         """Retorna un resumen del estado del proceso del servidor."""

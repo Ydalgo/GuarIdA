@@ -1,3 +1,4 @@
+import hmac
 import os
 import re
 import shutil
@@ -17,7 +18,7 @@ from guarida_manager.downloader.compliance import (
     GestorCumplimientoNormativo,
     RegionNormativa,
 )
-from guarida_manager.downloader.core import DescargadorSeguro
+from guarida_manager.downloader.core import DescargadorSeguro, calcular_sha256_archivo
 
 
 def validar_repo_hf(repo: str) -> str:
@@ -167,6 +168,57 @@ class CatalogoModelos:
             es_sin_censura=False,
             descripcion="Modelo alternativo rápido para pruebas sintácticas unitarias.",
         ),
+        "qwen3-8b-q4": DefinicionModeloCatalogo(
+            id="qwen3-8b-q4",
+            nombre_legible="Qwen3 8B (Q4_K_M - Generación Código y Razonamiento)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen3-8B-GGUF",
+            filename="Qwen3-8B-Q4_K_M.gguf",
+            tamano_gb=5.03,
+            ram_minima_gb=8.5,
+            ram_recomendada_gb=16.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen3-8B",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Arquitectura Qwen3 de última generación para código, AST y resolución algorítmica.",
+        ),
+        "qwen3-4b-q4": DefinicionModeloCatalogo(
+            id="qwen3-4b-q4",
+            nombre_legible="Qwen3 4B (Q4_K_M - Punto Dulce iGPU Intel/AMD)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen3-4B-GGUF",
+            filename="Qwen3-4B-Q4_K_M.gguf",
+            tamano_gb=2.50,
+            ram_minima_gb=5.0,
+            ram_recomendada_gb=8.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen3-4B",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Equilibrio ideal velocidad/calidad para gráficas integradas (Iris Xe / Radeon) con contexto amplio.",
+        ),
+        "qwen3-30b-a3b-q4": DefinicionModeloCatalogo(
+            id="qwen3-30b-a3b-q4",
+            nombre_legible="Qwen3-30B-A3B MoE (Q4_K_M - 3B Activos con --n-cpu-moe)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen3-30B-A3B-GGUF",
+            filename="Qwen3-30B-A3B-Q4_K_M.gguf",
+            tamano_gb=17.30,
+            ram_minima_gb=20.0,
+            ram_recomendada_gb=32.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen3-30B-A3B",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo MoE de 30B que solo activa 3B por token; permite descargar expertos a RAM con --n-cpu-moe.",
+        ),
 
         # =========================================================================
         # 2. ROL CHAT / CONVERSACIONAL (INTERFAZ HUMANA EN ESPAÑOL Y COORDINADOR)
@@ -236,9 +288,9 @@ class CatalogoModelos:
             categoria="embedding",
             cuantizacion="Q4_K_M",
             idiomas_destacados="es, en, código, 100+ idiomas",
-            repo_hf="CompendiumLabs/bge-m3-gguf",
-            filename="bge-m3-q4_k_m.gguf",
-            tamano_gb=0.35,
+            repo_hf="gpustack/bge-m3-GGUF",
+            filename="bge-m3-Q4_K_M.gguf",
+            tamano_gb=0.42,
             ram_minima_gb=1.5,
             ram_recomendada_gb=3.0,
             licencia="mit",
@@ -263,6 +315,57 @@ class CatalogoModelos:
             copyright_compliant=True,
             es_sin_censura=False,
             descripcion="Modelo compacto y auditable para recuperación semántica de funciones y variables.",
+        ),
+        "jina-embeddings-v2-code-q4": DefinicionModeloCatalogo(
+            id="jina-embeddings-v2-code-q4",
+            nombre_legible="Jina Embeddings v2 Code (Especializado AST / Código)",
+            categoria="embedding",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="en, python, js, ts, c++, rust, 30+ lenguajes",
+            repo_hf="second-state/jina-embeddings-v2-base-code-GGUF",
+            filename="jina-embeddings-v2-base-code-Q4_K_M.gguf",
+            tamano_gb=0.10,
+            ram_minima_gb=1.0,
+            ram_recomendada_gb=1.5,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/jinaai/jina-embeddings-v2-base-code",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Entrenado específicamente sobre repositorios de código y árboles sintácticos (8192 ctx, 768 dims).",
+        ),
+        "snowflake-arctic-embed-m-q4": DefinicionModeloCatalogo(
+            id="snowflake-arctic-embed-m-q4",
+            nombre_legible="Snowflake Arctic Embed M (Alta Precisión Técnica)",
+            categoria="embedding",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="en, código técnico",
+            repo_hf="mradermacher/snowflake-arctic-embed-m-GGUF",
+            filename="snowflake-arctic-embed-m.Q4_K_M.gguf",
+            tamano_gb=0.08,
+            ram_minima_gb=0.8,
+            ram_recomendada_gb=1.5,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Snowflake/snowflake-arctic-embed-m",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Recuperación semántica ultrarrápida de alta precisión para consultas técnicas (768 dims).",
+        ),
+        "all-minilm-l6-v2-q8": DefinicionModeloCatalogo(
+            id="all-minilm-l6-v2-q8",
+            nombre_legible="All-MiniLM-L6-v2 Q8 (Ultraligero CPU/iGPU)",
+            categoria="embedding",
+            cuantizacion="Q8_0",
+            idiomas_destacados="en, código",
+            repo_hf="second-state/All-MiniLM-L6-v2-Embedding-GGUF",
+            filename="all-MiniLM-L6-v2-ggml-model-q8_0.gguf",
+            tamano_gb=0.04,
+            ram_minima_gb=0.5,
+            ram_recomendada_gb=1.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Vectorizador ultraligero (40 MB, 384 dims) para hardware modesto con >100 emb/s en CPU.",
         ),
     }
 
@@ -371,11 +474,16 @@ class DescargadorModelos:
 
     def descargar_modelo(
         self,
-        modelo: DefinicionModeloCatalogo,
+        modelo: Any,
         region: RegionNormativa = RegionNormativa.ES_EU,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
         permitir_inseguro: bool = False,
     ) -> Path:
+        if isinstance(modelo, str):
+            def_mod = CatalogoModelos.obtener_modelo(modelo)
+            if not def_mod:
+                raise ValueError(f"Modelo '{modelo}' no encontrado en el catálogo.")
+            modelo = def_mod
         ruta_archivo_final = self.directorio_modelos / modelo.filename
 
         # Limpiar posibles restos de versiones antiguas (.partial)
@@ -409,15 +517,35 @@ class DescargadorModelos:
         url_hf = f"https://huggingface.co/{modelo.repo_hf}/resolve/{modelo.revision}/{modelo.filename}"
 
         try:
-            DescargadorSeguro.descargar_archivo(
-                url=url_hf,
-                ruta_destino=ruta_archivo_final,
-                sha256_esperado=modelo.sha256_esperado,
-                permitir_reanudacion=True,
-                permitir_inseguro=permitir_inseguro,
-                callback_progreso=callback_progreso,
-                user_agent="GuarIdA-Bunker-Downloader/1.0",
-            )
+            try:
+                DescargadorSeguro.descargar_archivo(
+                    url=url_hf,
+                    ruta_destino=ruta_archivo_final,
+                    sha256_esperado=modelo.sha256_esperado,
+                    permitir_reanudacion=True,
+                    permitir_inseguro=permitir_inseguro,
+                    callback_progreso=callback_progreso,
+                    user_agent="GuarIdA-Bunker-Downloader/1.0",
+                )
+            except Exception as err_primario:
+                if "404" in str(err_primario) and not modelo.sha256_esperado:
+                    url_alt = self._resolver_url_hf_fallback(modelo)
+                    if url_alt and url_alt != url_hf:
+                        log(f"Resolviendo espejo/nombre exacto en Hugging Face: {url_alt.split('/')[-1]}...", 5.0)
+                        DescargadorSeguro.descargar_archivo(
+                            url=url_alt,
+                            ruta_destino=ruta_archivo_final,
+                            sha256_esperado=None,
+                            permitir_reanudacion=True,
+                            permitir_inseguro=True,
+                            callback_progreso=callback_progreso,
+                            user_agent="GuarIdA-Bunker-Downloader/1.0",
+                        )
+                    else:
+                        raise err_primario
+                else:
+                    raise err_primario
+
             if modelo.sha256_esperado:
                 log(f"Modelo {modelo.filename} verificado criptográficamente con SHA-256 e integrado.", 100.0)
             else:
@@ -427,6 +555,61 @@ class DescargadorModelos:
         except Exception as e:
             log(f"Interrupción en la descarga de {modelo.filename}: {e}", 0.0)
             raise
+
+    @staticmethod
+    def _resolver_url_hf_fallback(modelo: DefinicionModeloCatalogo) -> Optional[str]:
+        """Consulta la API de Hugging Face o espejos alternativos si el nombre exacto del .gguf varía."""
+        import json
+        import urllib.request
+
+        espejos_por_id: dict[str, list[str]] = {
+            "bge-m3-q4": ["gpustack/bge-m3-GGUF", "cstr/bge-m3-GGUF", "CompendiumLabs/bge-m3-gguf"],
+            "jina-embeddings-v2-code-q4": [
+                "second-state/jina-embeddings-v2-base-code-GGUF",
+                "gandolfi/jina-embeddings-v2-base-code-Q4_K_M-GGUF",
+                "gaianet/jina-embeddings-v2-base-code-GGUF",
+            ],
+            "snowflake-arctic-embed-m-q4": [
+                "mradermacher/snowflake-arctic-embed-m-GGUF",
+                "gpustack/snowflake-arctic-embed-m-GGUF",
+                "yixuan-chia/snowflake-arctic-embed-m-GGUF",
+            ],
+            "qwen3-8b-q4": ["Qwen/Qwen3-8B-GGUF", "bartowski/Qwen_Qwen3-8B-GGUF", "unsloth/Qwen3-8B-GGUF"],
+            "qwen3-4b-q4": ["Qwen/Qwen3-4B-GGUF", "bartowski/Qwen_Qwen3-4B-GGUF", "unsloth/Qwen3-4B-GGUF"],
+        }
+        repos_candidatos = [modelo.repo_hf] + [
+            r for r in espejos_por_id.get(modelo.id, []) if r != modelo.repo_hf
+        ]
+        cuant_lower = modelo.cuantizacion.lower().replace("_", "")
+
+        for repo in repos_candidatos:
+            api_url = f"https://huggingface.co/api/models/{repo}"
+            try:
+                req = urllib.request.Request(api_url, headers={"User-Agent": "GuarIdA-Bunker-Downloader/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    datos = json.loads(resp.read().decode("utf-8"))
+                siblings = datos.get("siblings", [])
+                ggufs = [
+                    s.get("rfilename", "")
+                    for s in siblings
+                    if s.get("rfilename", "").lower().endswith(".gguf")
+                ]
+                if not ggufs:
+                    continue
+                # Buscar coincidencia por cuantización (ej. q4_k_m, q8_0, f16)
+                for g in ggufs:
+                    gl = g.lower().replace("_", "").replace("-", "")
+                    if cuant_lower in gl:
+                        return f"https://huggingface.co/{repo}/resolve/main/{g}"
+                # Si no hay Q4_K_M exacto, preferir Q8_0 o el primer .gguf disponible
+                for pref in ("q4", "q5", "q8", "f16"):
+                    for g in ggufs:
+                        if pref in g.lower():
+                            return f"https://huggingface.co/{repo}/resolve/main/{g}"
+                return f"https://huggingface.co/{repo}/resolve/main/{ggufs[0]}"
+            except Exception:
+                continue
+        return None
 
     def descargar_cesta(
         self,
@@ -519,3 +702,28 @@ class DescargadorModelos:
             training_summary_url=modelo.training_summary_url,
         )
         self.cache.guardar_modelo(registro)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Gestor de descarga y catálogo de modelos GGUF de GuarIdA.")
+    parser.add_argument("--descargar", type=str, help="ID del modelo del catálogo a descargar (ej. bge-m3-q4 o nomic-embed-text-v1.5)")
+    parser.add_argument("--listar", action="store_true", help="Listar modelos disponibles en el catálogo")
+    parser.add_argument("--categoria", type=str, default=None, help="Filtrar por categoría (coder, chat, embedding, etc.)")
+    args = parser.parse_args()
+
+    if args.listar:
+        print("\nModelos disponibles en catálogo:")
+        for m in CatalogoModelos.MODELOS.values():
+            if not args.categoria or m.categoria.lower() == args.categoria.lower():
+                print(f"  * {m.id:<25} [{m.categoria:<10}] {m.tamano_gb:.2f} GB - {m.nombre_legible}")
+    elif args.descargar:
+        descargador = DescargadorModelos()
+        print(f">> Iniciando descarga de '{args.descargar}'...")
+        try:
+            ruta = descargador.descargar_modelo(args.descargar, permitir_inseguro=True)
+            print(f"[OK] Modelo descargado y registrado en: {ruta}")
+        except Exception as e:
+            print(f"[ERROR]: {e}")
+            raise

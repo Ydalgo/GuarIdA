@@ -190,6 +190,27 @@ class BuscadorAfinamientoEtapas:
             if self.mejor_resultado is None or score >= self.mejor_score_global:
                 self.mejor_score_global = score
                 self.mejor_resultado = res
+                try:
+                    hw_now = obtener_informacion_hardware()
+                    opt_provisional = ConfiguracionOptimaRegistro(
+                        modelo_id=self.modelo_id,
+                        hash_hardware=hw_now.hash_hardware,
+                        n_gpu_layers=res.args.get("n_gpu_layers", 0),
+                        ctx_size=res.args.get("ctx_size", ctx_size),
+                        batch_size=res.args.get("batch_size", 512),
+                        kv_cache_tipo=res.args.get("kv_cache_tipo", "f16"),
+                        tok_s_medido=round(tg or 0.0, 2),
+                        gtt_pico_mb=res.metricas_memoria.gtt_pico_mb,
+                        fecha_afinamiento=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        motivo_descarte_o_nota=f"Mejor parcial ({res.etapa}, Score: {score:.2f})",
+                        es_recomendada=True,
+                        threads=res.args.get("threads", 4),
+                        ubatch_size=res.args.get("ubatch_size", 512),
+                        flash_attn=1 if res.args.get("flash_attn") else 0,
+                    )
+                    self.cache.guardar_configuracion_optima(opt_provisional)
+                except Exception:
+                    pass
         else:
             self._notificar(f"   [{res.estado.upper()}]: {res.error_resumen or 'Fallo durante el intento'}", progreso_etapa)
 

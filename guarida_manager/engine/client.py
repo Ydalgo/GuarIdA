@@ -208,6 +208,30 @@ class ClienteLlamaOffline:
 
     def calcular_embedding(self, contenido: str) -> list[float]:
         """Genera el vector de embedding para una cadena de texto mediante /embedding."""
+        def _aplanar(v: Any) -> list[float]:
+            while isinstance(v, list) and v and isinstance(v[0], list):
+                v = v[0]
+            if isinstance(v, list):
+                return [float(x) for x in v if isinstance(x, (int, float))]
+            return []
+
         payload = {"content": contenido}
         res = self._solicitud_http("/embedding", metodo="POST", datos=payload)
-        return res.get("embedding", [])
+        if isinstance(res, list):
+            if not res:
+                return []
+            primer = res[0]
+            if isinstance(primer, (int, float)):
+                return _aplanar(res)
+            if isinstance(primer, dict):
+                return _aplanar(primer.get("embedding", []))
+            if isinstance(primer, list):
+                return _aplanar(primer)
+            return []
+        if isinstance(res, dict):
+            if "embedding" in res:
+                return _aplanar(res.get("embedding"))
+            datos = res.get("data")
+            if isinstance(datos, list) and datos and isinstance(datos[0], dict):
+                return _aplanar(datos[0].get("embedding", []))
+        return []

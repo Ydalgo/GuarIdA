@@ -59,10 +59,18 @@ class PerfilBateria:
     seed: int = 42
     timeout_por_peticion_s: float = 90.0
     escenarios_activos: list[str] = field(
-        default_factory=lambda: ["pp", "tg", "ttft", "mixto", "calidad"]
+        default_factory=lambda: ["pp", "tg", "ttft", "mixto", "calidad", "embedding", "arbol_nodos"]
     )
     pp_tokens_lista: list[int] = field(default_factory=lambda: [512, 2048])
     tg_predict_lista: list[int] = field(default_factory=lambda: [256, 512])
+    textos_embedding_prueba: list[str] = field(
+        default_factory=lambda: [
+            "def derivar_clave_maestra(passphrase: str, salt: bytes) -> bytes:",
+            "class GestorBovedaCriptografica: almacenamiento seguro postcuántico",
+            "SELECT sha256_binario, version_build FROM capacidades_binario WHERE id = ?",
+            "Navegación de árboles sintácticos y grafos AST para programación agéntica",
+        ]
+    )
 
     def a_dict(self) -> dict[str, Any]:
         return asdict(self)

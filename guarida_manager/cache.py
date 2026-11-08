@@ -420,6 +420,8 @@ class GestorCache:
     def obtener_configuracion_optima(
         self, modelo_id: str, hash_hardware: str
     ) -> Optional[dict[str, Any]]:
+        import json
+
         with self.sesion() as conexion:
             cursor = conexion.execute(
                 """
@@ -429,10 +431,56 @@ class GestorCache:
                 (modelo_id, hash_hardware),
             )
             fila = cursor.fetchone()
+            if not fila:
+                cursor = conexion.execute(
+                    """
+                    SELECT * FROM configuraciones_optimas
+                    WHERE modelo_id = ?
+                    ORDER BY tok_s_medido DESC LIMIT 1;
+                    """,
+                    (modelo_id,),
+                )
+                fila = cursor.fetchone()
             if fila:
                 resultado = dict(fila)
                 resultado["es_recomendada"] = bool(resultado["es_recomendada"])
+                resultado["origen_config"] = "configuraciones_optimas"
                 return resultado
+
+            # Fallback automático: buscar la mejor configuración probada en bench_configs
+            cursor_bench = conexion.execute(
+                """
+                SELECT bc.args_json, bc.score, bc.gtt_pico_mb, bs.inicio
+                FROM bench_configs bc
+                JOIN bench_sesiones bs ON bc.sesion_id = bs.id
+                WHERE bs.modelo_id = ? AND bc.estado = 'ok'
+                ORDER BY bc.score DESC
+                LIMIT 1;
+                """,
+                (modelo_id,),
+            )
+            fb = cursor_bench.fetchone()
+            if fb and fb["args_json"]:
+                try:
+                    args = json.loads(fb["args_json"])
+                    return {
+                        "modelo_id": modelo_id,
+                        "hash_hardware": hash_hardware,
+                        "n_gpu_layers": args.get("n_gpu_layers", 0),
+                        "ctx_size": args.get("ctx_size", 4096),
+                        "batch_size": args.get("batch_size", 512),
+                        "ubatch_size": args.get("ubatch_size", 512),
+                        "threads": args.get("threads", 4),
+                        "kv_cache_tipo": args.get("kv_cache_tipo", "f16"),
+                        "flash_attn": 1 if args.get("flash_attn") else 0,
+                        "tok_s_medido": 0.0,
+                        "gtt_pico_mb": fb["gtt_pico_mb"] or 0.0,
+                        "motivo_descarte_o_nota": f"Mejor config de benchmark (Score: {fb['score']:.2f})",
+                        "es_recomendada": True,
+                        "origen_config": "bench_configs",
+                    }
+                except Exception:
+                    pass
             return None
 
     def listar_configuraciones_optimas(

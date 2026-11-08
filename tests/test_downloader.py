@@ -131,6 +131,20 @@ class TestDownloader(unittest.TestCase):
             self.assertEqual(afinamiento["ctx_size"], 16384)
             self.assertEqual(afinamiento["tok_s_medido"], 14.5)
 
+    def test_descargar_modelo_por_id_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cache = GestorCache(tmp_path / "test_str.db")
+            descargador = DescargadorModelos(directorio_modelos=tmp_path, gestor_cache=cache)
+            # Pre-crear archivo simulado para probar resolución por string ID
+            def_nomic = CatalogoModelos.obtener_modelo("nomic-embed-text-v1.5")
+            assert def_nomic is not None
+            fake_path = tmp_path / def_nomic.filename
+            fake_path.write_bytes(b"GGUF_FAKE_DATA")
+
+            ruta_res = descargador.descargar_modelo("nomic-embed-text-v1.5", permitir_inseguro=True)
+            self.assertEqual(ruta_res, fake_path)
+
 
 if __name__ == "__main__":
     unittest.main()
