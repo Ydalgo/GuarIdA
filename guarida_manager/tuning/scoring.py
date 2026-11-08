@@ -11,6 +11,7 @@ class EvaluadorScoring:
         "batch": {"peso_tg": 0.35, "peso_ttft": 0.05, "peso_pp": 0.60, "penalizacion_mem": 0.02},
         "agente_contexto_largo": {"peso_tg": 0.40, "peso_ttft": 0.20, "peso_pp": 0.25, "bonus_ctx": 0.15},
         "coder_ast": {"peso_tg": 0.50, "peso_ttft": 0.35, "peso_pp": 0.15, "penalizacion_mem": 0.10, "bonus_ast": 0.20},
+        "embedding": {"peso_emb_s": 0.65, "peso_latencia": 0.35, "penalizacion_mem": 0.15},
         "equilibrado": {"peso_tg": 0.45, "peso_ttft": 0.25, "peso_pp": 0.25, "penalizacion_mem": 0.05},
     }
 
@@ -72,6 +73,18 @@ class EvaluadorScoring:
         tg = metricas["tg_stats"]["mediana"]
         pp = metricas["pp_stats"]["mediana"]
         ttft = metricas["ttft_stats"]["mediana"]
+        emb_stats = metricas.get("embedding_stats")
+
+        if emb_stats and (objetivo.lower() == "embedding" or (tg <= 0.0 and pp <= 0.0)):
+            emb_s = float(emb_stats.get("embeddings_por_s", 0.0))
+            lat_ms = float(emb_stats.get("latencia_media_ms", 0.0))
+            if emb_s <= 0.0:
+                return 0.0
+            comp_emb = emb_s * 1.2
+            comp_lat = (1000.0 / max(5.0, lat_ms)) * 8.0 if lat_ms > 0 else 0.0
+            factor_mem_emb = 1.0 - min(0.4, (memoria_mb / 8192.0) * 0.15)
+            score_emb = (comp_emb * 0.65 + comp_lat * 0.35) * factor_mem_emb
+            return round(max(0.01, score_emb), 2)
 
         if tg <= 0.0 and pp <= 0.0:
             return 0.0

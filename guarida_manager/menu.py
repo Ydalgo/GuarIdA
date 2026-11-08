@@ -498,6 +498,12 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
         if s_g.isdigit() and 1 <= int(s_g) <= len(modelos_gen):
             lista_gen_a_probar = [modelos_gen[int(s_g) - 1]]
 
+    hw_actual = obtener_informacion_hardware()
+    opt_emb = cache.obtener_configuracion_optima(mod_emb["id"], hw_actual.hash_hardware) or {}
+    hilos_coop_emb = opt_emb.get("threads") or max(1, (hw_actual.nucleos_fisicos or 4) // 2)
+    batch_coop_emb = opt_emb.get("batch_size") or 512
+    ubatch_coop_emb = opt_emb.get("ubatch_size") or 512
+
     gestor_emb = GestorLlamaServer(gestor_cache=cache)
     puerto_emb = encontrar_puerto_libre("127.0.0.1")
     clave_emb = secrets.token_urlsafe(32)
@@ -508,9 +514,9 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
         port=puerto_emb,
         n_gpu_layers=0,
         ctx_size=2048,
-        batch_size=512,
-        ubatch_size=512,
-        threads=4,
+        batch_size=batch_coop_emb,
+        ubatch_size=ubatch_coop_emb,
+        threads=hilos_coop_emb,
         embedding=True,
         api_key=clave_emb,
         alias=mod_emb["id"],
@@ -519,7 +525,10 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
     resumen_cara_a_cara: list[dict] = []
 
     try:
-        print(f"\nIniciando motor AST '{mod_emb['id']}' en puerto {puerto_emb}...")
+        print(
+            f"\nIniciando motor AST '{mod_emb['id']}' [Modo Cooperativo: ngl=0, hilos={hilos_coop_emb}, "
+            f"batch={batch_coop_emb}] en puerto {puerto_emb}..."
+        )
         gestor_emb.iniciar_servidor(cfg_emb)
         for _ in range(30):
             if cliente_emb.esta_disponible():
@@ -544,12 +553,21 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
             perfil=perfil_bat,
             cliente_embedding=cliente_emb,
         )
-        print(f"\n[Fase 1] Midiendo throughput de vectorización (/embedding) con '{mod_emb['id']}'...")
+        print(f"\n[Fase 1] Vectorizando Árbol AST con '{mod_emb['id']}' y liberando recursos antes del Coder...")
         res_emb = bateria_emb.ejecutar_escenario_embedding()
         validas_emb = [r for r in res_emb if not r.get("es_calentamiento") and r.get("exito") == 1] or res_emb
         if validas_emb:
             e0 = validas_emb[0]
             print(f"  -> Vectorización: {e0.get('embeddings_por_s', 0)} emb/s (Latencia: {e0.get('ttft_ms', 0)} ms | Dimensiones: {e0.get('dimensiones_vector', 0)})")
+
+        # Pre-indexar en caché SHA-256 los vectores del escenario AST y detener el motor de embeddings
+        # para ceder el 100% de CPU y ancho de banda RAM/VRAM al modelo Coder
+        try:
+            bateria_emb.precalentar_cache_ast()
+        except Exception:
+            pass
+        gestor_emb.detener_servidor()
+        print("  -> [Cooperación Activa] Vectores AST en caché SHA-256; motor de embeddings pausado (100% hardware libre para Coder).")
 
         for idx_m, mod_gen in enumerate(lista_gen_a_probar, 1):
             if binario:
@@ -644,11 +662,15 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
                 print(f"  RESULTADOS: {mod_gen['id']} + AST {mod_emb['id']}")
                 print("-" * 75)
                 print(f"  * Nodo AST recuperado:         {ca['nodo_recuperado']}")
-                print(f"  * Tokens de Prompt (Baseline): {ca['prompt_tokens_baseline']} tokens")
-                print(f"  * Tokens de Prompt (AST+BPE):  {ca['prompt_tokens_arbol']} tokens{info_kv}")
-                print(f"  * Compresión / Ahorro Tokens:  {ca['ahorro_tokens_pct']}% ({ca.get('ratio_compresion_x', 1.0)}x menos tokens)")
+                print(f"  * Tokens de Prompt (Entrada):  AST+BPE: {ca['prompt_tokens_arbol']} vs Base: {ca['prompt_tokens_baseline']} tokens{info_kv}")
+                print(f"  * Tokens Generados (Salida):   AST Telegráfico: {ca.get('predicted_tokens_arbol', '?')} vs Base: {ca.get('predicted_tokens_baseline', '?')} tokens")
+                print(f"  * Compresión / Ahorro Tokens:  {ca['ahorro_tokens_pct']}% ({ca.get('ratio_compresion_x', 1.0)}x menos tokens de contexto)")
                 print(f"  * Velocidad Lectura (PP):      AST: {ca.get('pp_arbol_tok_s', 0.0)} tok/s vs Base: {ca.get('pp_baseline_tok_s', 0.0)} tok/s")
-                print(f"  * Velocidad Creación (TG):     AST: {ca.get('tg_arbol_tok_s', 0.0)} tok/s vs Base: {ca.get('tg_baseline_tok_s', 0.0)} tok/s")
+                print(
+                    f"  * Velocidad Creación (TG):     AST: {ca.get('tg_arbol_tok_s', 0.0)} tok/s "
+                    f"(Efectiva: {ca.get('tg_efectivo_tok_s', ca.get('tg_arbol_tok_s', 0.0))} tok/s) "
+                    f"vs Base: {ca.get('tg_baseline_tok_s', 0.0)} tok/s"
+                )
                 print(f"  * Latencia Baseline directa:   {ca['latencia_baseline_ms']} ms")
                 print(f"  * Latencia asistida por AST:   {ca['latencia_arbol_ms']} ms (búsqueda AST: {ca['overhead_recuperacion_ast_ms']} ms)")
                 print(f"  * Aceleración (Speedup):       {ca.get('speedup_x', 1.0)}x más rápido")

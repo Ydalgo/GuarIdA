@@ -43,6 +43,12 @@ class BuscadorAfinamientoEtapas:
         self.capacidades = capacidades
         self.perfil_barrido = perfil_barrido or GestorPerfilesTuning.obtener_perfil_barrido("estandar")
         self.perfil_bateria = perfil_bateria or GestorPerfilesTuning.obtener_perfil_bateria("estandar")
+        self.es_modelo_embedding = any(
+            k in self.modelo_id.lower() for k in ("embed", "bge", "minilm", "jina", "snowflake")
+        )
+        if self.es_modelo_embedding:
+            self.perfil_bateria.escenarios_activos = ["embedding"]
+            self.perfil_barrido.objetivo_scoring = "embedding"
         self.cache = gestor_cache or GestorCache()
         self.callback_progreso = callback_progreso
         self.ejecutor = EjecutorIntentoLlama()
@@ -156,12 +162,13 @@ class BuscadorAfinamientoEtapas:
             batch_size=batch_size,
             threads=threads,
             kv_cache_type=kv_cache_tipo,
+            embedding=self.es_modelo_embedding,
             ubatch_size=ubatch_size if self.capacidades.soporta_ubatch else None,
             flash_attn=flash_attn if self.capacidades.soporta_flash_attn else False,
         )
 
         def _bateria(cliente) -> list[dict[str, Any]]:
-            bat = BateriaEstresLlama(cliente, self.perfil_bateria)
+            bat = BateriaEstresLlama(cliente, self.perfil_bateria, cliente_embedding=cliente)
             return bat.ejecutar_bateria_completa(ctx_size=ctx_size)
 
         res = self.ejecutor.ejecutar_intento(
@@ -183,10 +190,20 @@ class BuscadorAfinamientoEtapas:
             tg = metricas["tg_stats"]["mediana"]
             pp = metricas["pp_stats"]["mediana"]
             ttft = metricas["ttft_stats"]["mediana"]
-            self._notificar(
-                f"   [OK] TG: {tg:4.1f} tok/s | PP: {pp:4.1f} tok/s | TTFT: {ttft:4.0f} ms | Score: {score:5.2f} | {telemetria_str}",
-                progreso_etapa,
-            )
+            emb_st = metricas.get("embedding_stats")
+            if self.es_modelo_embedding and emb_st:
+                emb_s = emb_st.get("embeddings_por_s", 0.0)
+                lat_e = emb_st.get("latencia_media_ms", ttft)
+                dim_e = emb_st.get("dimensiones_vector", 0)
+                self._notificar(
+                    f"   [OK] Vectorización: {emb_s:5.1f} emb/s | Latencia: {lat_e:4.1f} ms | Dim: {dim_e} | Score: {score:5.2f} [Cooperativo CPU: ngl=0] | {telemetria_str}",
+                    progreso_etapa,
+                )
+            else:
+                self._notificar(
+                    f"   [OK] TG: {tg:4.1f} tok/s | PP: {pp:4.1f} tok/s | TTFT: {ttft:4.0f} ms | Score: {score:5.2f} | {telemetria_str}",
+                    progreso_etapa,
+                )
             if self.mejor_resultado is None or score >= self.mejor_score_global:
                 self.mejor_score_global = score
                 self.mejor_resultado = res
@@ -318,6 +335,13 @@ class BuscadorAfinamientoEtapas:
 
         # ETAPA 0: Baseline
         hilos_def = hw.nucleos_fisicos if hw.nucleos_fisicos > 0 else 4
+        if self.es_modelo_embedding:
+            self._notificar(
+                "Modo Cooperativo AST activado: ngl=0 fijo (100% GPU reservada al modelo Coder) y poda de hilos CPU.",
+                0.08,
+            )
+            hilos_def = max(1, hilos_def // 2)
+
         res_base = self.probar_configuracion(
             etapa="etapa_0_baseline",
             n_gpu_layers=0,
@@ -333,9 +357,9 @@ class BuscadorAfinamientoEtapas:
         if res_base.estado == "ok" and self.mejor_resultado is None:
             self.mejor_resultado = res_base
 
-        # ETAPA 1: Búsqueda binaria de n_gpu_layers
+        # ETAPA 1: Búsqueda binaria de n_gpu_layers (omitida en modelos de embeddings cooperativos)
         ngl_optimo = 0
-        if hw.tiene_aceleracion_gpu:
+        if hw.tiene_aceleracion_gpu and not self.es_modelo_embedding:
             self._notificar("Buscando capas en GPU (n_gpu_layers)...", 0.15)
             limite_capas_max = 45  # Límite práctico general para modelos 7B-14B
             bajo, alto = 0, limite_capas_max
@@ -381,12 +405,17 @@ class BuscadorAfinamientoEtapas:
 
         # ETAPA 2: Optimización de Hilos
         self._notificar("Afinando hilos de CPU...", 0.35)
-        hilos_candidatos = sorted(list({
-            max(1, hilos_def // 2),
-            hilos_def,
-            hilos_def + 2,
-            hw.nucleos_logicos,
-        }))
+        if self.es_modelo_embedding:
+            # No superar la mitad de núcleos físicos para no restar CPU al modelo Coder
+            max_coop = max(2, (hw.nucleos_fisicos or 4) // 2)
+            hilos_candidatos = sorted(list({1, 2, max_coop}))
+        else:
+            hilos_candidatos = sorted(list({
+                max(1, hilos_def // 2),
+                hilos_def,
+                hilos_def + 2,
+                hw.nucleos_logicos,
+            }))
         hilos_optimos = hilos_def
         for h in hilos_candidatos:
             if self._presupuesto_agotado():
@@ -429,52 +458,52 @@ class BuscadorAfinamientoEtapas:
                 if r.score > self.mejor_score_global:
                     b_opt, ub_opt = b, ub
 
-        # ETAPA 4: Flash Attention y KV Cache
-        self._notificar("Probando Flash Attention y cuantización de KV Cache...", 0.75)
+        # ETAPA 4 y 5: Flash Attention, KV Cache y Contexto (solo modelos generativos)
         fa_opt = False
         kv_opt = "f16"
-        opciones_fa = [True, False] if self.capacidades.soporta_flash_attn else [False]
-        for fa in opciones_fa:
-            for kv in self.perfil_barrido.kv_cache_tipos:
+        ctx_opt = 2048
+        if not self.es_modelo_embedding:
+            self._notificar("Probando Flash Attention y cuantización de KV Cache...", 0.75)
+            opciones_fa = [True, False] if self.capacidades.soporta_flash_attn else [False]
+            for fa in opciones_fa:
+                for kv in self.perfil_barrido.kv_cache_tipos:
+                    if self._presupuesto_agotado():
+                        break
+                    r = self.probar_configuracion(
+                        etapa="etapa_4_kv_fa",
+                        n_gpu_layers=ngl_optimo,
+                        threads=hilos_optimos,
+                        batch_size=b_opt,
+                        ubatch_size=ub_opt,
+                        kv_cache_tipo=kv,
+                        flash_attn=fa,
+                        ctx_size=2048,
+                        sesion_id=sesion_id,
+                        progreso_etapa=0.80,
+                    )
+                    if r.score > self.mejor_score_global:
+                        fa_opt, kv_opt = fa, kv
+
+            self._notificar("Determinando contexto máximo estable...", 0.85)
+            for c in self.perfil_barrido.ctx_escalones:
                 if self._presupuesto_agotado():
                     break
                 r = self.probar_configuracion(
-                    etapa="etapa_4_kv_fa",
+                    etapa="etapa_5_ctx",
                     n_gpu_layers=ngl_optimo,
                     threads=hilos_optimos,
                     batch_size=b_opt,
                     ubatch_size=ub_opt,
-                    kv_cache_tipo=kv,
-                    flash_attn=fa,
-                    ctx_size=2048,
+                    kv_cache_tipo=kv_opt,
+                    flash_attn=fa_opt,
+                    ctx_size=c,
                     sesion_id=sesion_id,
-                    progreso_etapa=0.80,
+                    progreso_etapa=0.90,
                 )
-                if r.score > self.mejor_score_global:
-                    fa_opt, kv_opt = fa, kv
-
-        # ETAPA 5: Contexto Máximo Estable
-        self._notificar("Determinando contexto máximo estable...", 0.85)
-        ctx_opt = 2048
-        for c in self.perfil_barrido.ctx_escalones:
-            if self._presupuesto_agotado():
-                break
-            r = self.probar_configuracion(
-                etapa="etapa_5_ctx",
-                n_gpu_layers=ngl_optimo,
-                threads=hilos_optimos,
-                batch_size=b_opt,
-                ubatch_size=ub_opt,
-                kv_cache_tipo=kv_opt,
-                flash_attn=fa_opt,
-                ctx_size=c,
-                sesion_id=sesion_id,
-                progreso_etapa=0.90,
-            )
-            if r.estado == "ok":
-                ctx_opt = c
-            else:
-                break
+                if r.estado == "ok":
+                    ctx_opt = c
+                else:
+                    break
 
         # Finalizar sesión en BD
         with self.cache.sesion() as conn:

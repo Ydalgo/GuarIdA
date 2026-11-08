@@ -13,7 +13,7 @@ _CACHE_EMBEDDINGS_AST: dict[str, list[float]] = {}
 
 
 def minificar_codigo_bpe(codigo: str) -> str:
-    """Comprime código Python para tokenizadores BPE: colapsa docstrings/comentarios y usa tabulaciones."""
+    """Comprime código Python para tokenizadores BPE: elimina docstrings/comentarios, compacta operadores y usa tabs."""
     lineas_salida: list[str] = []
     en_docstring = False
     delim_doc = ""
@@ -32,26 +32,20 @@ def minificar_codigo_bpe(codigo: str) -> str:
             delim_doc = strip_l[:3]
             contenido_doc = strip_l[3:]
             if contenido_doc.endswith(delim_doc) and len(strip_l) > 6:
-                resumen = contenido_doc[:-3].strip()
-                if resumen:
-                    espacios = len(linea) - len(linea.lstrip(" "))
-                    tabs = "\t" * (espacios // 4)
-                    lineas_salida.append(f"{tabs}# {resumen}")
                 continue
-            else:
-                en_docstring = True
-                resumen_ini = contenido_doc.strip()
-                if resumen_ini:
-                    espacios = len(linea) - len(linea.lstrip(" "))
-                    tabs = "\t" * (espacios // 4)
-                    lineas_salida.append(f"{tabs}# {resumen_ini}")
-                continue
+            en_docstring = True
+            continue
 
         if strip_l.startswith("#"):
             continue
 
+        # Compactar espacios alrededor de operadores comunes fuera de literales para ahorrar tokens BPE
+        if '"' not in strip_l and "'" not in strip_l:
+            strip_l = re.sub(r"\s*([=,+*/<>!]+|->)\s*", r"\1", strip_l)
+            strip_l = re.sub(r":\s+", ":", strip_l)
+
         espacios = len(linea) - len(linea.lstrip(" "))
-        tabs = "\t" * (espacios // 4) + (" " * (espacios % 4))
+        tabs = "\t" * (espacios // 4)
         lineas_salida.append(f"{tabs}{strip_l}")
 
     return "\n".join(lineas_salida)
@@ -317,6 +311,7 @@ class ArbolNodosCodigo:
         nodos_relevantes: list[tuple[NodoAST, float]],
         incluir_padre: bool = True,
         comprimir_bpe: bool = True,
+        incluir_hermanos: bool = True,
     ) -> str:
         """Ensambla contexto ultra-compacto combinando Esqueleto AST y Minificación BPE."""
         bloques: list[str] = []
@@ -332,11 +327,11 @@ class ArbolNodosCodigo:
                     padre = self.nodos[nodo.padre_id]
                     if padre.tipo != TipoNodoAST.MODULO:
                         lineas_esqueleto.append(f"{padre.resumen_sintactico}:")
-                        # Incluir firmas de hermanos como esqueleto de 1 línea
-                        for h_id in padre.hijos_ids:
-                            if h_id != nodo.id_nodo and h_id in self.nodos:
-                                hermano = self.nodos[h_id]
-                                lineas_esqueleto.append(f"\t{hermano.resumen_sintactico}: ...")
+                        if incluir_hermanos:
+                            for h_id in padre.hijos_ids:
+                                if h_id != nodo.id_nodo and h_id in self.nodos:
+                                    hermano = self.nodos[h_id]
+                                    lineas_esqueleto.append(f"\t{hermano.resumen_sintactico}:...")
                         nodos_incluidos.add(padre.id_nodo)
 
                 codigo_min = minificar_codigo_bpe(nodo.codigo)
@@ -367,7 +362,7 @@ class ArbolNodosCodigo:
         nodos_relevantes: list[tuple[NodoAST, float]],
     ) -> MensajeInterModelo:
         """Crea un MensajeInterModelo normalizado con tipo_accion='CONSULTA_NODOS'."""
-        contexto = self.construir_contexto_optimo(nodos_relevantes)
+        contexto = self.construir_contexto_optimo(nodos_relevantes, incluir_hermanos=False)
         payload = {
             "consulta": consulta_usuario,
             "total_nodos_encontrados": len(nodos_relevantes),
