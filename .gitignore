@@ -35,6 +35,7 @@ htmlcov/
 bin/
 models/
 .guarida/
+repositorio_demo/
 
 # OS specific
 .DS_Store

@@ -48,9 +48,10 @@ def opcion_proyectos(
         print_func("  [3] Chatear con un proyecto (nueva sesión)")
         print_func("  [4] Reanudar una sesión anterior")
         print_func("  [5] Eliminar proyecto (no borra archivos del disco)")
+        print_func("  [6] Demostración guiada paso a paso (Árbol AST, Chunks y RRF)")
         print_func("  [0] Volver")
         try:
-            op = input_func("Selecciona una opción [0-5]: ").strip()
+            op = input_func("Selecciona una opción [0-6]: ").strip()
         except (KeyboardInterrupt, EOFError):
             return
 
@@ -108,6 +109,11 @@ def opcion_proyectos(
                 if conf in ("s", "si", "y", "yes"):
                     gestor.eliminar_proyecto(p["id"])
                     print_func("[OK] Proyecto eliminado.")
+
+        elif op == "6":
+            from guarida_manager.demo_rag import ejecutar_demostracion_completa
+            ejecutar_demostracion_completa(print_func=print_func)
+            input_func("\nPresiona [Enter] para continuar...")
 
         else:
             print_func("[!] Opción no válida.")

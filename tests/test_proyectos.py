@@ -264,6 +264,23 @@ class TestProyectosCorrecciones(TestProyectosNotebookLM):
         self.assertEqual(self.cache.obtener_embedding("k1"), [0.25, -1.5, 3.0])
         self.assertIsNone(self.cache.obtener_embedding("no-existe"))
 
+    def test_ejecutar_demostracion_completa(self):
+        from guarida_manager.demo_rag import ejecutar_demostracion_completa
+        salidas: list[str] = []
+        dir_demo = Path(self.temp_dir) / "sub_demo"
+        res = ejecutar_demostracion_completa(
+            ruta_demo=dir_demo,
+            gestor_cache=self.cache,
+            print_func=salidas.append,
+        )
+        self.assertEqual(res["archivos"], 3)
+        self.assertGreaterEqual(res["nodos_ast"], 3)
+        self.assertEqual(res["fuentes_recuperadas"], 2)
+        txt = "\n".join(salidas)
+        self.assertIn("DEMOSTRACIÓN DIDÁCTICA", txt)
+        self.assertIn("GestorTokens", txt)
+        self.assertIn("autenticacion.py", txt)
+
 
 if __name__ == "__main__":
     unittest.main()

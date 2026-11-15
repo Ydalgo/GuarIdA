@@ -353,16 +353,32 @@ def seleccionar_pareja_chat(
     input_func: Callable[[str], str] = input,
     print_func: Callable[..., Any] = print,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Permite al usuario decidir soberanamente con qué pareja chatear, ofreciendo recomendaciones o selección manual."""
+    """Permite al usuario decidir soberanamente con qué pareja chatear, destacando la sugerencia óptima."""
     mostrar_parejas_recomendadas(parejas_recomendadas, modelo_activo=modelo_activo, print_func=print_func)
-    print_func("\nTú decides con qué pareja conversar:")
-    print_func(f"  [1-{len(parejas_recomendadas)}] Elegir una de las parejas recomendadas arriba")
-    print_func("  [M]   Elegir manualmente cualquier combinación (modelo generativo + motor AST/embedding)")
+    
+    top = parejas_recomendadas[0] if parejas_recomendadas else None
+    if top:
+        tok_top = f"{top['tok_s']:.1f} tok/s" if top.get("tok_s") else "Alta velocidad"
+        tag_real = "medido en benchmark" if top.get("tok_s_es_real") else "estimado por hardware"
+        precision_top = f"Score Calidad/Afinamiento: {top.get('score_conjunto', 0.0):.1f}/100"
+        print_func("\n" + "=" * 80)
+        print_func("  MODELO SUGERIDO AUTOMÁTICAMENTE (MEJOR RELACIÓN VELOCIDAD Y PRECISIÓN):")
+        print_func(f"    * Modelo:     {top['modelo_gen_id']} (Motor AST: {top['modelo_emb_id']})")
+        print_func(f"    * Velocidad:  {tok_top} ({tag_real})")
+        print_func(f"    * Precisión:  {precision_top} | {top.get('clasificacion_rendimiento', '')}")
+        print_func(f"    * Estado:     {'Disponible en disco' if top.get('descargado_gen') else 'En catálogo (descarga 1-clic)'}")
+        print_func("=" * 80)
+
+    print_func("\nOpciones de selección:")
+    if top:
+        print_func(f"  [Enter] o [1] Usar el sugerido ({top['modelo_gen_id']})")
+    print_func(f"  [2-{len(parejas_recomendadas)}]    Elegir cualquiera de las otras opciones de la tabla")
+    print_func("  [M]          Selección manual libre (elegir cualquier modelo generativo y motor AST)")
     if modelo_activo:
-        print_func(f"  [A]   Mantener modelo generativo ya cargado en el servidor ('{modelo_activo}')")
+        print_func(f"  [A]          Mantener modelo actualmente cargado en el servidor ('{modelo_activo}')")
 
     try:
-        sel = input_func("\nSelecciona tu opción de pareja: ").strip()
+        sel = input_func("\nSelecciona tu opción (Enter = sugerido #1): ").strip()
     except (KeyboardInterrupt, EOFError):
         return None, None
 
