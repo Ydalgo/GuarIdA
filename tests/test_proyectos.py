@@ -198,6 +198,23 @@ class TestProyectosCorrecciones(TestProyectosNotebookLM):
         r3 = gestor3.escanear_e_indexar_proyecto(proy.id, modelo_emb_id="emb_snap")
         self.assertFalse(r3.get("snapshot_reutilizado", False))
 
+    def test_optimizacion_git_hash_o1_sin_escaneo_archivos(self):
+        from unittest.mock import patch
+        proy = self.gestor.crear_proyecto("GitTest", self.dir_proyecto)
+
+        with patch("guarida_manager.proyectos._obtener_hash_git_limpio", return_value="abc1234567890def"):
+            r1 = self.gestor.escanear_e_indexar_proyecto(proy.id, modelo_emb_id="emb_git")
+            self.assertFalse(r1.get("snapshot_reutilizado", False))
+
+        # En la segunda pasada con mismo commit hash, no debe invocarse os.walk
+        gestor2 = GestorProyectos(gestor_cache=self.cache)
+        with patch("guarida_manager.proyectos._obtener_hash_git_limpio", return_value="abc1234567890def"), \
+             patch("os.walk", side_effect=AssertionError("os.walk no debe ejecutarse en modo Git O(1)")):
+            r2 = gestor2.escanear_e_indexar_proyecto(proy.id, modelo_emb_id="emb_git")
+            self.assertTrue(r2.get("snapshot_reutilizado", False))
+            self.assertEqual(r2.get("modo_verificacion"), "git_o1")
+            self.assertEqual(len(gestor2._chunks_texto[proy.id]), len(self.gestor._chunks_texto[proy.id]))
+
     def test_busqueda_solo_lexica_sin_embeddings(self):
         proy = self.gestor.crear_proyecto("Lex", self.dir_proyecto)
         self.gestor.escanear_e_indexar_proyecto(proy.id)

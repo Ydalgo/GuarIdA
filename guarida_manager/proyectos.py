@@ -10,6 +10,7 @@ import json
 import os
 import pickle
 import re
+import subprocess
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -518,6 +519,40 @@ def fragmentar_codigo_generico(
     return chunks
 
 
+def _obtener_hash_git_limpio(ruta: Path) -> Optional[str]:
+    """Obtiene el hash de commit HEAD si es un repo Git con working tree limpio (O(1))."""
+    dot_git = ruta / ".git"
+    if not dot_git.exists():
+        return None
+    try:
+        res_head = subprocess.run(
+            ["git", "-C", str(ruta), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+        if res_head.returncode != 0:
+            return None
+        commit_head = res_head.stdout.strip()
+        if not commit_head or len(commit_head) < 8:
+            return None
+
+        res_status = subprocess.run(
+            ["git", "-C", str(ruta), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+        if res_status.returncode != 0 or res_status.stdout.strip():
+            return None
+
+        return commit_head
+    except Exception:
+        return None
+
+
 class GestorProyectos:
     """Controlador principal de proyectos, indexación local de código/documentos y RAG offline."""
 
@@ -597,6 +632,36 @@ class GestorProyectos:
         ruta_base = Path(proy["ruta_directorio"])
         if not ruta_base.exists():
             raise FileNotFoundError(f"El directorio del proyecto no existe: {ruta_base}")
+
+        slug_emb = re.sub(r"[^\w\-.]", "_", modelo_emb_id or "default")
+        ruta_snapshot = self.dir_cache_snapshots / f"{proyecto_id}_{slug_emb}.pkl"
+
+        # Optimización O(1): Verificación instantánea por Git Tree / Commit Hash (sin escanear archivos)
+        git_commit_hash = _obtener_hash_git_limpio(ruta_base)
+        if git_commit_hash:
+            try:
+                if ruta_snapshot.exists():
+                    with open(ruta_snapshot, "rb") as f_snap:
+                        datos_snap = pickle.load(f_snap)
+                    if datos_snap.get("git_commit_hash") == git_commit_hash:
+                        arbol_snap = datos_snap.get("arbol", ArbolNodosCodigo())
+                        chunks_snap = datos_snap.get("chunks_docs", [])
+                        motor_snap = datos_snap.get("motor_hibrido")
+                        self._arboles_codigo[proyecto_id] = arbol_snap
+                        self._chunks_texto[proyecto_id] = chunks_snap
+                        if motor_snap is not None:
+                            self._motores_hibridos[proyecto_id] = motor_snap
+                        if callback_progreso:
+                            callback_progreso(
+                                f"Repositorio Git validado en O(1) por commit [{git_commit_hash[:8]}] (sin escaneo de archivos)",
+                                100.0,
+                            )
+                        stats_snap = dict(datos_snap.get("estadisticas", {}))
+                        stats_snap["snapshot_reutilizado"] = True
+                        stats_snap["modo_verificacion"] = "git_o1"
+                        return stats_snap
+            except (OSError, Exception) as e_snap:
+                logger.debug(f"Error cargando snapshot git de proyecto '{proyecto_id}': {e_snap}")
 
         exts = extensiones or EXTENSIONES_SOPORTADAS
         archivos_candidatos: list[Path] = []
@@ -878,6 +943,7 @@ class GestorProyectos:
                 pickle.dump(
                     {
                         "firma_hash": firma_hash,
+                        "git_commit_hash": git_commit_hash,
                         "arbol": arbol,
                         "chunks_docs": chunks_docs,
                         "motor_hibrido": self._motores_hibridos.get(proyecto_id),
