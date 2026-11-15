@@ -541,23 +541,17 @@ class BateriaEstresLlama:
             prompt_arbol = (
                 f"Contexto semántico AST:\n"
                 f"{msg_inter.payload['contexto_sintactico']}\n"
-                f"Q:{consulta}\n"
-                f"Formato(alg|bytes|fn):"
+                f"Pregunta: {consulta}\n"
+                f"Respuesta concisa:"
             )
             t_ini_gen_arbol = time.perf_counter()
             resp_arbol = self.cliente.completar_texto(
                 prompt=prompt_arbol,
-                n_predict=16,
+                n_predict=32,
                 temperatura=0.0,
-                top_p=1.0,
                 cache_prompt=True,
-                stop=["\n"],
+                stop=["\n\n"],
                 seed=self.perfil.seed,
-                top_k=1,
-                min_p=0.0,
-                repeat_penalty=1.0,
-                samplers=["top_k"],
-                n_probs=0,
             )
             latencia_gen_arbol_ms = (time.perf_counter() - t_ini_gen_arbol) * 1000.0
             latencia_total_arbol_ms = t_recuperacion_ms + latencia_gen_arbol_ms

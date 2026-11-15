@@ -32,8 +32,18 @@ def minificar_codigo_bpe(codigo: str) -> str:
             delim_doc = strip_l[:3]
             contenido_doc = strip_l[3:]
             if contenido_doc.endswith(delim_doc) and len(strip_l) > 6:
+                resumen = contenido_doc[:-3].strip()
+                if resumen:
+                    espacios = len(linea) - len(linea.lstrip(" "))
+                    tabs = "\t" * (espacios // 4)
+                    lineas_salida.append(f"{tabs}# {resumen}")
                 continue
             en_docstring = True
+            resumen_ini = contenido_doc.strip()
+            if resumen_ini:
+                espacios = len(linea) - len(linea.lstrip(" "))
+                tabs = "\t" * (espacios // 4)
+                lineas_salida.append(f"{tabs}# {resumen_ini}")
             continue
 
         if strip_l.startswith("#"):

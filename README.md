@@ -191,6 +191,7 @@ Sistema automatizado para encontrar el **Punto Dulce** de cualquier modelo sobre
 - [ADR 0007: Afinamiento Empírico y Benchmarking Reproducible](docs/adr/0007-afinamiento-empirico-y-benchmarking-reproducible.md)
 - [ADR 0008: Adopción Selectiva de Capacidades Maya (Inspección GGUF, Caché y Telemetría)](docs/adr/0008-adopcion-capacidades-maya-inspeccion-gguf-cache-y-telemetria.md)
 - [ADR 0009: Árbol de Nodos AST, Compresión BPE, Búsqueda Híbrida RRF y Comparativa Cara a Cara](docs/adr/0009-arbol-nodos-ast-compresion-bpe-y-comparativa-modelos.md)
+- [ADR 0010: Optimizaciones Avanzadas de Inferencia, Subsistema de Proyectos y RAG de Repositorio Local](docs/adr/0010-optimizaciones-motor-proyectos-y-rag-repositorio.md)
 
 ## Licencia
 

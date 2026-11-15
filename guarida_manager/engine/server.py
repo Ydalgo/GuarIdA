@@ -29,6 +29,13 @@ FLAGS_PERMITIDOS_EXTRA_ARGS = {
     "--verbose", "-v", "--log-disable",
     "--defrag-thold", "--n-predict", "-n",
     "--temp", "--top-p", "--top-k",
+    "--ctx-shift", "--cache-reuse",
+    "--lookup-cache", "--lookup",
+    "-md", "--model-draft",
+    "--draft", "--draft-min", "--draft-max", "--draft-p-min",
+    "--slot-save-path", "--slots",
+    "-ctk", "--cache-type-k", "-ctv", "--cache-type-v",
+    "--cpu-strict",
 }
 
 _SERVIDORES_ACTIVOS: set["GestorLlamaServer"] = set()
@@ -62,6 +69,14 @@ class LlamaServerConfig:
     api_key: Optional[str] = None
     ubatch_size: Optional[int] = None
     flash_attn: bool = False
+    threads_batch: Optional[int] = None
+    ctx_shift: bool = False
+    cache_reuse: Optional[int] = None
+    lookup_cache: Optional[int] = None
+    model_draft_path: Optional[Path] = None
+    draft_max: Optional[int] = None
+    mlock: bool = False
+    no_mmap: bool = False
     extra_args: list[str] = field(default_factory=list)
 
     def construir_comando(self) -> list[str]:
@@ -91,11 +106,34 @@ class LlamaServerConfig:
         if self.threads and self.threads > 0:
             cmd.extend(["-t", str(self.threads)])
 
+        if self.threads_batch and self.threads_batch > 0:
+            cmd.extend(["-tb", str(self.threads_batch)])
+
         if self.ubatch_size and self.ubatch_size > 0:
             cmd.extend(["-ub", str(self.ubatch_size)])
 
         if self.flash_attn:
             cmd.append("-fa")
+
+        if self.ctx_shift:
+            cmd.append("--ctx-shift")
+
+        if self.cache_reuse and self.cache_reuse > 0:
+            cmd.extend(["--cache-reuse", str(self.cache_reuse)])
+
+        if self.lookup_cache and self.lookup_cache > 0:
+            cmd.extend(["--lookup-cache", str(self.lookup_cache)])
+
+        if self.model_draft_path:
+            cmd.extend(["-md", str(self.model_draft_path)])
+            if self.draft_max and self.draft_max > 0:
+                cmd.extend(["--draft-max", str(self.draft_max)])
+
+        if self.mlock:
+            cmd.append("--mlock")
+
+        if self.no_mmap:
+            cmd.append("--no-mmap")
 
         if self.kv_cache_type and self.kv_cache_type != "f16":
             # Formatos de kv cache soportados en llama.cpp: q8_0, q4_0, etc.
@@ -154,12 +192,18 @@ class LlamaServerConfig:
         except OSError:
             tamano_gb = 0.0
 
+        es_igpu = info_hw.tipo_gpu_principal in ("Intel", "CPU") or not info_hw.tiene_aceleracion_gpu or (
+            bool(info_hw.gpus) and all(g.tipo == "Integrada" or g.vram_dedicada_gb == 0 for g in info_hw.gpus)
+        )
         excede_vram_gpu = tamano_gb > 0 and tamano_gb > info_hw.gtt_disponible_gb
+        debe_forzar_cpu = excede_vram_gpu or (es_igpu and tamano_gb >= 6.0)
 
-        if optima and not excede_vram_gpu:
+        if optima and not debe_forzar_cpu:
             hilos_opt = optima.get("threads") or hilos
             ubatch = optima.get("ubatch_size")
             fa = bool(optima.get("flash_attn", 0))
+            if info_hw.tipo_gpu_principal != "NVIDIA" or not info_hw.tiene_aceleracion_gpu:
+                fa = False
             extra = []
             if optima.get("extra_args_json"):
                 try:
@@ -169,9 +213,6 @@ class LlamaServerConfig:
                         extra = parsed_extra
                 except Exception:
                     pass
-            if excede_vram_gpu:
-                if "-nkvo" not in extra:
-                    extra.append("-nkvo")
             return cls(
                 modelo_path=modelo_path,
                 binario_path=binario_path,
@@ -194,9 +235,9 @@ class LlamaServerConfig:
         if not info_hw.tiene_aceleracion_gpu:
             ngl_por_defecto = 0
             ctx_def, batch_def, ubatch_def, kv_def = 2048, 256, 256, "q8_0"
-        elif excede_vram_gpu:
-            # Modelo mayor que la memoria GTT de la GPU (ej. 30B MoE de 17.7 GB en iGPU de 8 GB):
-            # forzar CPU (-ngl 0 -nkvo) para evitar vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+        elif debe_forzar_cpu:
+            # Modelo que excede VRAM o grande en iGPU (ej. 14B de 9 GB en Intel Iris Xe):
+            # forzar CPU puro (-ngl 0 -nkvo) para evitar vk::Device::allocateMemory: ErrorOutOfDeviceMemory
             ngl_por_defecto = 0
             ctx_def, batch_def, ubatch_def, kv_def = 2048, 256, 128, "q8_0"
             extra_fallback = ["-nkvo"]
@@ -243,6 +284,14 @@ class GestorLlamaServer:
     def config_activa(self) -> Optional[LlamaServerConfig]:
         return self._config_activa
 
+    @property
+    def host(self) -> str:
+        return self._config_activa.host if self._config_activa else "127.0.0.1"
+
+    @property
+    def port(self) -> int:
+        return self._config_activa.port if self._config_activa else 8083
+
     def esta_activo(self) -> bool:
         if self._proceso is None:
             return False
@@ -282,6 +331,7 @@ class GestorLlamaServer:
         env = {k: v for k, v in os.environ.items() if not k.startswith("LLAMA_ARG_")}
         if config.api_key:
             env["LLAMA_ARG_API_KEY"] = config.api_key
+            env["LLAMA_API_KEY"] = config.api_key
 
         try:
             proceso = subprocess.Popen(

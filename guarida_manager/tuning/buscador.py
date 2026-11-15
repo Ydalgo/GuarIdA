@@ -406,6 +406,14 @@ class BuscadorAfinamientoEtapas:
         )
         if res_base.estado == "ok" and self.mejor_resultado is None:
             self.mejor_resultado = res_base
+        elif res_base.estado != "ok" and "cargar pesos" in (res_base.error_resumen or "").lower():
+            self._notificar(
+                f"[CRITICAL] {res_base.error_resumen}. Abortando: verifique la integridad del archivo GGUF o la memoria libre.",
+                1.0,
+            )
+            with self.cache.sesion() as conn:
+                conn.execute("UPDATE bench_sesiones SET estado = 'fallida' WHERE id = ?;", (sesion_id,))
+            return None
 
         # ETAPA 1: Búsqueda binaria de n_gpu_layers (omitida en modelos de embeddings cooperativos)
         ngl_optimo = 0

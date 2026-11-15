@@ -134,7 +134,14 @@ class EjecutorIntentoLlama:
         if any(k in low for k in ("unknown argument", "error: unknown option", "unrecognized option", "invalid argument", "error: invalid option")):
             return "flag_invalido", "Argumento o flag no soportado por el binario"
         if "failed to load model" in low or "error loading model" in low:
-            return "crash", "Fallo al cargar pesos del modelo"
+            detalle = ""
+            for linea in texto_log.splitlines():
+                lin_low = linea.lower()
+                if any(k in lin_low for k in ("error loading model", "failed to load model", "invalid magic", "error reading", "mmap failed", "unknown model architecture", "unsupported", "cannot open", "not enough space")):
+                    detalle = linea.strip()
+                    break
+            msg = f"Fallo al cargar pesos del modelo: {detalle}" if detalle else "Fallo al cargar pesos del modelo"
+            return "crash", msg
         if returncode is not None and returncode != 0:
             return "crash", f"Proceso abortó con código de salida {returncode}"
         return "crash", "Fallo no especificado durante la ejecución"

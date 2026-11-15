@@ -32,10 +32,89 @@ class TestDownloader(unittest.TestCase):
         self.assertIsNotNone(chat_m)
         self.assertEqual(chat_m.categoria, "chat")
 
-        # Verificar modelo sin censura
-        uncensored_m = CatalogoModelos.obtener_modelo("qwen2.5-coder-7b-abliterated-q4")
-        self.assertIsNotNone(uncensored_m)
-        self.assertTrue(uncensored_m.es_sin_censura)
+        # Verificar modelos margen por abajo (ultraligeros)
+        q05 = CatalogoModelos.obtener_modelo("qwen2.5-coder-0.5b-q4")
+        self.assertIsNotNone(q05)
+        self.assertLess(q05.tamano_gb, 1.0)
+        smol = CatalogoModelos.obtener_modelo("smollm2-360m-instruct-q8")
+        self.assertIsNotNone(smol)
+        self.assertLess(smol.tamano_gb, 0.5)
+
+        # Verificar modelos margen por arriba (alta potencia / workstation)
+        q14 = CatalogoModelos.obtener_modelo("qwen2.5-coder-14b-q4")
+        self.assertIsNotNone(q14)
+        self.assertGreaterEqual(q14.tamano_gb, 8.0)
+        q32 = CatalogoModelos.obtener_modelo("qwen2.5-coder-32b-q4")
+        self.assertIsNotNone(q32)
+        self.assertGreaterEqual(q32.tamano_gb, 18.0)
+        deepseek_r1 = CatalogoModelos.obtener_modelo("deepseek-r1-distill-qwen-14b-q4")
+        self.assertIsNotNone(deepseek_r1)
+
+    def test_estimacion_y_afinamiento_automatico(self):
+        from guarida_manager.hardware import InformacionHardware
+        from guarida_manager.menu_actions import estimar_conjunto_modelos_optimo, afinar_modelo_automatico
+
+        # Test HW modesto -> Tier ultraligero
+        hw_modesto = InformacionHardware(
+            modelo_cpu="Intel Celeron",
+            nucleos_fisicos=2,
+            nucleos_logicos=2,
+            ram_total_bytes=4 * 1024**3,
+            ram_total_gb=4.0,
+            gpus=(),
+            nombre_gpu_principal="None",
+            tiene_aceleracion_gpu=False,
+            gtt_disponible_gb=0.0,
+            hash_hardware="test_modesto_hash",
+            memoria_extrema_forzable_gb=3.0,
+        )
+        est_modesto = estimar_conjunto_modelos_optimo(hw_modesto)
+        self.assertEqual(est_modesto["tier"], "ultraligero")
+        self.assertIn("qwen2.5-coder-0.5b-q4", est_modesto["modelos"])
+
+        # Test HW potente -> Tier workstation_pro_64gb
+        hw_workstation = InformacionHardware(
+            modelo_cpu="AMD Ryzen 9",
+            nucleos_fisicos=16,
+            nucleos_logicos=32,
+            ram_total_bytes=64 * 1024**3,
+            ram_total_gb=64.0,
+            gpus=(),
+            nombre_gpu_principal="NVIDIA RTX 4090",
+            tiene_aceleracion_gpu=True,
+            gtt_disponible_gb=24.0,
+            hash_hardware="test_workstation_hash",
+            memoria_extrema_forzable_gb=50.0,
+        )
+        est_workstation = estimar_conjunto_modelos_optimo(hw_workstation)
+        self.assertEqual(est_workstation["tier"], "workstation_pro_64gb")
+        self.assertIn("qwen2.5-coder-32b-q4", est_workstation["modelos"])
+
+        # Test HW extremo 128 GB VRAM -> Tier ultra_128gb
+        hw_128 = InformacionHardware(
+            modelo_cpu="Apple M4 Ultra / Dual H100",
+            nucleos_fisicos=24,
+            nucleos_logicos=24,
+            ram_total_bytes=128 * 1024**3,
+            ram_total_gb=128.0,
+            gpus=(),
+            nombre_gpu_principal="NVIDIA H100 80GB HBM3",
+            tiene_aceleracion_gpu=True,
+            gtt_disponible_gb=120.0,
+            hash_hardware="test_128vram_hash",
+            memoria_extrema_forzable_gb=120.0,
+        )
+        est_128 = estimar_conjunto_modelos_optimo(hw_128)
+        self.assertEqual(est_128["tier"], "ultra_128gb")
+        self.assertIn("qwen2.5-72b-instruct-q4", est_128["modelos"])
+
+        # Test auto-afinamiento en cache
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache = GestorCache(Path(tmp_dir) / "test_tune.db")
+            reg = afinar_modelo_automatico(cache, "qwen2.5-coder-0.5b-q4")
+            self.assertEqual(reg.modelo_id, "qwen2.5-coder-0.5b-q4")
+            self.assertGreater(reg.ctx_size, 0)
+            self.assertGreater(reg.batch_size, 0)
 
     def test_agregar_modelo_personalizado(self):
         custom = CatalogoModelos.agregar_modelo_personalizado(

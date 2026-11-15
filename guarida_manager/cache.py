@@ -40,6 +40,50 @@ class ModuloRegistro:
 
 
 @dataclass(frozen=True)
+class ProyectoRegistro:
+    id: str
+    nombre: str
+    descripcion: str
+    ruta_directorio: str
+    fecha_creacion: str
+
+
+@dataclass(frozen=True)
+class DocumentoProyectoRegistro:
+    id: Optional[int]
+    proyecto_id: str
+    ruta_relativa: str
+    ruta_absoluta: str
+    tipo_documento: str
+    sha256: str
+    nodos_ast_count: int
+    n_tokens_est: int
+    fecha_indexacion: str
+
+
+@dataclass(frozen=True)
+class SesionChatRegistro:
+    id: str
+    proyecto_id: Optional[str]
+    modelo_id: str
+    titulo: str
+    fecha_creacion: str
+    fecha_actualizacion: str
+
+
+@dataclass(frozen=True)
+class MensajeChatRegistro:
+    id: Optional[int]
+    sesion_id: str
+    rol: str
+    contenido: str
+    tokens_prompt: int
+    tokens_generados: int
+    fuentes_ast_json: Optional[str]
+    fecha: str
+
+
+@dataclass(frozen=True)
 class ConfiguracionOptimaRegistro:
     modelo_id: str
     hash_hardware: str
@@ -236,6 +280,62 @@ class GestorCache:
                     conexion.execute("ALTER TABLE configuraciones_optimas ADD COLUMN extra_args_json TEXT;")
             except Exception:
                 pass
+
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS proyectos (
+                    id TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    descripcion TEXT NOT NULL,
+                    ruta_directorio TEXT NOT NULL,
+                    fecha_creacion TEXT NOT NULL
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS documentos_proyecto (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    proyecto_id TEXT NOT NULL,
+                    ruta_relativa TEXT NOT NULL,
+                    ruta_absoluta TEXT NOT NULL,
+                    tipo_documento TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    nodos_ast_count INTEGER DEFAULT 0,
+                    n_tokens_est INTEGER DEFAULT 0,
+                    fecha_indexacion TEXT NOT NULL,
+                    FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE CASCADE
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sesiones_chat (
+                    id TEXT PRIMARY KEY,
+                    proyecto_id TEXT,
+                    modelo_id TEXT NOT NULL,
+                    titulo TEXT NOT NULL,
+                    fecha_creacion TEXT NOT NULL,
+                    fecha_actualizacion TEXT NOT NULL,
+                    FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE SET NULL
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mensajes_chat (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sesion_id TEXT NOT NULL,
+                    rol TEXT NOT NULL,
+                    contenido TEXT NOT NULL,
+                    tokens_prompt INTEGER DEFAULT 0,
+                    tokens_generados INTEGER DEFAULT 0,
+                    fuentes_ast_json TEXT,
+                    fecha TEXT NOT NULL,
+                    FOREIGN KEY (sesion_id) REFERENCES sesiones_chat(id) ON DELETE CASCADE
+                );
+                """
+            )
 
     def guardar_modelo(self, modelo: ModeloRegistro) -> None:
         with self.sesion() as conexion:
@@ -538,6 +638,157 @@ class GestorCache:
         with self.sesion() as conexion:
             cursor = conexion.execute(
                 "SELECT nombre, fecha FROM modulos_instalados ORDER BY nombre ASC;"
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    # --- Métodos para Proyectos y Documentos (NotebookLM Local / Repositorio) ---
+
+    def guardar_proyecto(self, proyecto: ProyectoRegistro) -> None:
+        with self.sesion() as conexion:
+            conexion.execute(
+                """
+                INSERT INTO proyectos (id, nombre, descripcion, ruta_directorio, fecha_creacion)
+                VALUES (:id, :nombre, :descripcion, :ruta_directorio, :fecha_creacion)
+                ON CONFLICT(id) DO UPDATE SET
+                    nombre = excluded.nombre,
+                    descripcion = excluded.descripcion,
+                    ruta_directorio = excluded.ruta_directorio;
+                """,
+                asdict(proyecto),
+            )
+
+    def obtener_proyecto(self, proyecto_id: str) -> Optional[dict[str, Any]]:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                "SELECT * FROM proyectos WHERE id = ?;", (proyecto_id,)
+            )
+            fila = cursor.fetchone()
+            return dict(fila) if fila else None
+
+    def listar_proyectos(self) -> list[dict[str, Any]]:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                "SELECT * FROM proyectos ORDER BY fecha_creacion DESC;"
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    def eliminar_proyecto(self, proyecto_id: str) -> bool:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                "DELETE FROM proyectos WHERE id = ?;", (proyecto_id,)
+            )
+            return cursor.rowcount > 0
+
+    def guardar_documento_proyecto(self, doc: DocumentoProyectoRegistro) -> int:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                """
+                INSERT INTO documentos_proyecto (
+                    proyecto_id, ruta_relativa, ruta_absoluta, tipo_documento,
+                    sha256, nodos_ast_count, n_tokens_est, fecha_indexacion
+                )
+                VALUES (
+                    :proyecto_id, :ruta_relativa, :ruta_absoluta, :tipo_documento,
+                    :sha256, :nodos_ast_count, :n_tokens_est, :fecha_indexacion
+                );
+                """,
+                {
+                    "proyecto_id": doc.proyecto_id,
+                    "ruta_relativa": doc.ruta_relativa,
+                    "ruta_absoluta": doc.ruta_absoluta,
+                    "tipo_documento": doc.tipo_documento,
+                    "sha256": doc.sha256,
+                    "nodos_ast_count": doc.nodos_ast_count,
+                    "n_tokens_est": doc.n_tokens_est,
+                    "fecha_indexacion": doc.fecha_indexacion,
+                },
+            )
+            return cursor.lastrowid or 0
+
+    def listar_documentos_proyecto(self, proyecto_id: str) -> list[dict[str, Any]]:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                "SELECT * FROM documentos_proyecto WHERE proyecto_id = ? ORDER BY ruta_relativa ASC;",
+                (proyecto_id,),
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    def eliminar_documentos_proyecto(self, proyecto_id: str) -> None:
+        with self.sesion() as conexion:
+            conexion.execute("DELETE FROM documentos_proyecto WHERE proyecto_id = ?;", (proyecto_id,))
+
+    # --- Métodos para Sesiones y Mensajes de Chat ---
+
+    def guardar_sesion_chat(self, sesion: SesionChatRegistro) -> None:
+        with self.sesion() as conexion:
+            conexion.execute(
+                """
+                INSERT INTO sesiones_chat (id, proyecto_id, modelo_id, titulo, fecha_creacion, fecha_actualizacion)
+                VALUES (:id, :proyecto_id, :modelo_id, :titulo, :fecha_creacion, :fecha_actualizacion)
+                ON CONFLICT(id) DO UPDATE SET
+                    titulo = excluded.titulo,
+                    fecha_actualizacion = excluded.fecha_actualizacion;
+                """,
+                asdict(sesion),
+            )
+
+    def obtener_sesion_chat(self, sesion_id: str) -> Optional[dict[str, Any]]:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                "SELECT * FROM sesiones_chat WHERE id = ?;", (sesion_id,)
+            )
+            fila = cursor.fetchone()
+            return dict(fila) if fila else None
+
+    def listar_sesiones_chat(self, proyecto_id: Optional[str] = None) -> list[dict[str, Any]]:
+        with self.sesion() as conexion:
+            if proyecto_id:
+                cursor = conexion.execute(
+                    "SELECT * FROM sesiones_chat WHERE proyecto_id = ? ORDER BY fecha_actualizacion DESC;",
+                    (proyecto_id,),
+                )
+            else:
+                cursor = conexion.execute(
+                    "SELECT * FROM sesiones_chat ORDER BY fecha_actualizacion DESC;"
+                )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    def eliminar_sesion_chat(self, sesion_id: str) -> bool:
+        with self.sesion() as conexion:
+            cursor = conexion.execute("DELETE FROM sesiones_chat WHERE id = ?;", (sesion_id,))
+            return cursor.rowcount > 0
+
+    def guardar_mensaje_chat(self, msg: MensajeChatRegistro) -> int:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                """
+                INSERT INTO mensajes_chat (
+                    sesion_id, rol, contenido, tokens_prompt, tokens_generados, fuentes_ast_json, fecha
+                )
+                VALUES (:sesion_id, :rol, :contenido, :tokens_prompt, :tokens_generados, :fuentes_ast_json, :fecha);
+                """,
+                {
+                    "sesion_id": msg.sesion_id,
+                    "rol": msg.rol,
+                    "contenido": msg.contenido,
+                    "tokens_prompt": msg.tokens_prompt,
+                    "tokens_generados": msg.tokens_generados,
+                    "fuentes_ast_json": msg.fuentes_ast_json,
+                    "fecha": msg.fecha,
+                },
+            )
+            # Actualizar fecha de la sesión
+            conexion.execute(
+                "UPDATE sesiones_chat SET fecha_actualizacion = ? WHERE id = ?;",
+                (msg.fecha, msg.sesion_id),
+            )
+            return cursor.lastrowid or 0
+
+    def obtener_mensajes_sesion(self, sesion_id: str) -> list[dict[str, Any]]:
+        with self.sesion() as conexion:
+            cursor = conexion.execute(
+                "SELECT * FROM mensajes_chat WHERE sesion_id = ? ORDER BY id ASC;",
+                (sesion_id,),
             )
             return [dict(fila) for fila in cursor.fetchall()]
 

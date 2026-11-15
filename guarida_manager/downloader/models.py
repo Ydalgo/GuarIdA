@@ -36,12 +36,14 @@ def validar_repo_hf(repo: str) -> str:
 
 
 def validar_filename_hf(filename: str) -> str:
-    """Valida y sanea el nombre de archivo del modelo GGUF evitando path traversal."""
+    """Valida y sanea el nombre de archivo del modelo GGUF o Safetensors evitando path traversal."""
     filename = filename.strip()
     if "/" in filename or "\\" in filename or ".." in filename or Path(filename).name != filename:
         raise ValueError(f"Ruta o nombre de archivo sospechoso (intento de path traversal): '{filename}'")
-    if not re.match(r"^[a-zA-Z0-9_\-\.]+\.gguf$", filename, re.IGNORECASE):
-        raise ValueError(f"Nombre de archivo de modelo no válido. Debe tener extensión .gguf: '{filename}'")
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+\.(gguf|safetensors|bin|pt)$", filename, re.IGNORECASE):
+        raise ValueError(
+            f"Nombre de archivo de modelo no válido. Debe tener extensión .gguf, .safetensors, .bin o .pt: '{filename}'"
+        )
     return filename
 
 
@@ -74,6 +76,7 @@ class DefinicionModeloCatalogo:
     descripcion: str
     sha256_esperado: Optional[str] = None
     revision: str = "main"
+    formato: str = "gguf"  # "gguf", "safetensors", "pytorch"
 
 
 class CatalogoModelos:
@@ -134,6 +137,23 @@ class CatalogoModelos:
             es_sin_censura=False,
             descripcion="Reduce consumo de memoria para permitir contextos de 32k tokens en APUs de 16 GB.",
         ),
+        "qwen2.5-coder-0.5b-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-0.5b-q4",
+            nombre_legible="Qwen2.5-Coder 0.5B (Q4_K_M - Ultraligero CPU)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF",
+            filename="qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+            tamano_gb=0.39,
+            ram_minima_gb=1.5,
+            ram_recomendada_gb=3.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo de código ultracompacto para hardware muy modesto o ejecución ultra-rápida en CPU.",
+        ),
         "qwen2.5-coder-1.5b-q4": DefinicionModeloCatalogo(
             id="qwen2.5-coder-1.5b-q4",
             nombre_legible="Qwen2.5-Coder 1.5B (Q4_K_M - Ultraligero)",
@@ -167,6 +187,23 @@ class CatalogoModelos:
             copyright_compliant=True,
             es_sin_censura=False,
             descripcion="Modelo alternativo rápido para pruebas sintácticas unitarias.",
+        ),
+        "qwen2.5-coder-3b-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-3b-q4",
+            nombre_legible="Qwen2.5-Coder 3B (Q4_K_M - Paso Intermedio)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+            filename="qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+            tamano_gb=1.95,
+            ram_minima_gb=4.5,
+            ram_recomendada_gb=8.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Excelente equilibrio intermedio entre 1.5B y 7B para portátiles con memoria moderada.",
         ),
         "qwen3-8b-q4": DefinicionModeloCatalogo(
             id="qwen3-8b-q4",
@@ -219,6 +256,176 @@ class CatalogoModelos:
             es_sin_censura=False,
             descripcion="Modelo MoE de 30B que solo activa 3B por token; permite descargar expertos a RAM con --n-cpu-moe.",
         ),
+        "qwen2.5-coder-14b-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-14b-q4",
+            nombre_legible="Qwen2.5-Coder 14B (Q4_K_M - Alta Capacidad y Refactorización)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
+            filename="qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+            tamano_gb=8.99,
+            ram_minima_gb=14.0,
+            ram_recomendada_gb=24.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Rendimiento excepcional en código complejo, arquitectura multi-archivo y refactorizaciones.",
+        ),
+        "qwen2.5-coder-32b-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-32b-q4",
+            nombre_legible="Qwen2.5-Coder 32B (Q4_K_M - Buque Insignia Código)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen2.5-Coder-32B-Instruct-GGUF",
+            filename="qwen2.5-coder-32b-instruct-q4_k_m.gguf",
+            tamano_gb=19.85,
+            ram_minima_gb=24.0,
+            ram_recomendada_gb=36.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo insignia de programación con nivel competitivo frente a modelos cerrados punteros.",
+        ),
+        "deepseek-r1-distill-qwen-7b-q4": DefinicionModeloCatalogo(
+            id="deepseek-r1-distill-qwen-7b-q4",
+            nombre_legible="DeepSeek-R1 Distill Qwen 7B (Q4_K_M - Razonamiento 7B)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, razonamiento, es, en",
+            repo_hf="bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+            filename="DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+            tamano_gb=4.68,
+            ram_minima_gb=8.0,
+            ram_recomendada_gb=16.0,
+            licencia="mit",
+            training_summary_url="https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo de razonamiento 7B con cadena de pensamiento para lógica algorítmica profunda.",
+        ),
+        "deepseek-r1-distill-qwen-14b-q4": DefinicionModeloCatalogo(
+            id="deepseek-r1-distill-qwen-14b-q4",
+            nombre_legible="DeepSeek-R1 Distill Qwen 14B (Q4_K_M - Razonamiento Puro 14B)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, razonamiento, es, en",
+            repo_hf="bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+            filename="DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+            tamano_gb=8.98,
+            ram_minima_gb=14.0,
+            ram_recomendada_gb=24.0,
+            licencia="mit",
+            training_summary_url="https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Destilación de DeepSeek-R1 para razonamiento exhaustivo, matemáticas y depuración compleja.",
+        ),
+        "codestral-22b-q4": DefinicionModeloCatalogo(
+            id="codestral-22b-q4",
+            nombre_legible="Codestral 22B (Q4_K_M - Ventana 32k Mistral)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, 80+ lenguajes, es, en",
+            repo_hf="bartowski/Codestral-22B-v0.1-GGUF",
+            filename="Codestral-22B-v0.1-Q4_K_M.gguf",
+            tamano_gb=13.50,
+            ram_minima_gb=18.0,
+            ram_recomendada_gb=32.0,
+            licencia="mnpl",
+            training_summary_url="https://huggingface.co/mistralai/Codestral-22B-v0.1",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo de Mistral especializado en programación con soporte nativo de fill-in-the-middle y 32k contexto.",
+        ),
+        "qwen2.5-coder-32b-q8": DefinicionModeloCatalogo(
+            id="qwen2.5-coder-32b-q8",
+            nombre_legible="Qwen2.5-Coder 32B (Q8_0 - Máxima Precisión Coder)",
+            categoria="coder",
+            cuantizacion="Q8_0",
+            idiomas_destacados="código, es, en",
+            repo_hf="Qwen/Qwen2.5-Coder-32B-Instruct-GGUF",
+            filename="qwen2.5-coder-32b-instruct-q8_0.gguf",
+            tamano_gb=34.50,
+            ram_minima_gb=40.0,
+            ram_recomendada_gb=64.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Insignia Coder sin pérdida de cuantización. Ideal para GPUs de 48-64 GB VRAM.",
+        ),
+        "llama-3.3-70b-instruct-q4": DefinicionModeloCatalogo(
+            id="llama-3.3-70b-instruct-q4",
+            nombre_legible="Llama 3.3 70B Instruct (Q4_K_M - Nivel Flagship)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en, multilingüe",
+            repo_hf="bartowski/Llama-3.3-70B-Instruct-GGUF",
+            filename="Llama-3.3-70B-Instruct-Q4_K_M.gguf",
+            tamano_gb=42.50,
+            ram_minima_gb=48.0,
+            ram_recomendada_gb=64.0,
+            licencia="llama-3.3-license",
+            training_summary_url="https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo de 70B de Meta con rendimiento comparable a GPT-4. Óptimo para VRAM >=48 GB.",
+        ),
+        "qwen2.5-72b-instruct-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-72b-instruct-q4",
+            nombre_legible="Qwen2.5 72B Instruct (Q4_K_M - Titán Open Source)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, es, en, 29+ idiomas",
+            repo_hf="Qwen/Qwen2.5-72B-Instruct-GGUF",
+            filename="qwen2.5-72b-instruct-q4_k_m.gguf",
+            tamano_gb=43.50,
+            ram_minima_gb=50.0,
+            ram_recomendada_gb=64.0,
+            licencia="qwen-license",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-72B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Capacidad de razonamiento y generación de arquitectura de software a gran escala (VRAM >=48 GB).",
+        ),
+        "deepseek-r1-distill-llama-70b-q4": DefinicionModeloCatalogo(
+            id="deepseek-r1-distill-llama-70b-q4",
+            nombre_legible="DeepSeek-R1 Distill Llama 70B (Q4_K_M - Razonamiento 70B)",
+            categoria="coder",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="código, razonamiento matemático, es, en",
+            repo_hf="bartowski/DeepSeek-R1-Distill-Llama-70B-GGUF",
+            filename="DeepSeek-R1-Distill-Llama-70B-Q4_K_M.gguf",
+            tamano_gb=42.50,
+            ram_minima_gb=48.0,
+            ram_recomendada_gb=64.0,
+            licencia="mit",
+            training_summary_url="https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Razonamiento CoT de frontera sobre arquitectura Llama 70B para problemas algorítmicos complejos.",
+        ),
+        "qwen2.5-72b-instruct-q8": DefinicionModeloCatalogo(
+            id="qwen2.5-72b-instruct-q8",
+            nombre_legible="Qwen2.5 72B Instruct (Q8_0 - Monstruo 128 GB VRAM)",
+            categoria="coder",
+            cuantizacion="Q8_0",
+            idiomas_destacados="código, es, en, multilingüe",
+            repo_hf="Qwen/Qwen2.5-72B-Instruct-GGUF",
+            filename="qwen2.5-72b-instruct-q8_0.gguf",
+            tamano_gb=77.00,
+            ram_minima_gb=85.0,
+            ram_recomendada_gb=128.0,
+            licencia="qwen-license",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-72B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Máxima fidelidad FP8 para equipos con 96-128 GB VRAM (Mac Ultra, dual A100/H100 o multi-GPU).",
+        ),
 
         # =========================================================================
         # 2. ROL CHAT / CONVERSACIONAL (INTERFAZ HUMANA EN ESPAÑOL Y COORDINADOR)
@@ -256,6 +463,57 @@ class CatalogoModelos:
             copyright_compliant=True,
             es_sin_censura=False,
             descripcion="Modelo ligero de Meta con excelente razonamiento lógico y diálogo estructurado.",
+        ),
+        "llama-3.2-1b-chat-q4": DefinicionModeloCatalogo(
+            id="llama-3.2-1b-chat-q4",
+            nombre_legible="Llama 3.2 1B Instruct (Q4_K_M - Meta Ligero)",
+            categoria="chat",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="es, en",
+            repo_hf="bartowski/Llama-3.2-1B-Instruct-GGUF",
+            filename="Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+            tamano_gb=0.80,
+            ram_minima_gb=2.0,
+            ram_recomendada_gb=4.0,
+            licencia="llama-3.2-license",
+            training_summary_url="https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo conversacional ultracompacto de Meta para bajo consumo de memoria.",
+        ),
+        "qwen2.5-0.5b-chat-q4": DefinicionModeloCatalogo(
+            id="qwen2.5-0.5b-chat-q4",
+            nombre_legible="Qwen2.5 0.5B Chat (Q4_K_M - Asistente Ultraligero)",
+            categoria="chat",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="es, en, multilingüe",
+            repo_hf="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+            filename="qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            tamano_gb=0.39,
+            ram_minima_gb=1.5,
+            ram_recomendada_gb=3.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Asistente ultraligero con excelente entendimiento de español y consumo inferior a 400 MB.",
+        ),
+        "smollm2-360m-instruct-q8": DefinicionModeloCatalogo(
+            id="smollm2-360m-instruct-q8",
+            nombre_legible="SmolLM2 360M Instruct (Q8_0 - Micro Agente)",
+            categoria="chat",
+            cuantizacion="Q8_0",
+            idiomas_destacados="es, en",
+            repo_hf="HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
+            filename="smollm2-360m-instruct-q8_0.gguf",
+            tamano_gb=0.38,
+            ram_minima_gb=1.0,
+            ram_recomendada_gb=2.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Micro-modelo de HuggingFace optimizado para interacciones locales inmediatas con CPU modesta.",
         ),
 
         # =========================================================================
@@ -366,6 +624,47 @@ class CatalogoModelos:
             copyright_compliant=True,
             es_sin_censura=False,
             descripcion="Vectorizador ultraligero (40 MB, 384 dims) para hardware modesto con >100 emb/s en CPU.",
+            formato="gguf",
+        ),
+
+        # =========================================================================
+        # 5. MODELOS CON TENSORES Y PESOS NATIVOS (SAFETENSORS / PYTORCH)
+        # =========================================================================
+        "smollm2-135m-safetensors": DefinicionModeloCatalogo(
+            id="smollm2-135m-safetensors",
+            nombre_legible="SmolLM2 135M (Pesos Safetensors Nativo)",
+            categoria="chat",
+            cuantizacion="FP16/BF16",
+            idiomas_destacados="es, en",
+            repo_hf="HuggingFaceTB/SmolLM2-135M-Instruct",
+            filename="model.safetensors",
+            tamano_gb=0.27,
+            ram_minima_gb=1.0,
+            ram_recomendada_gb=2.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Tensores y pesos originales Safetensors ejecutables con transformers/torch.",
+            formato="safetensors",
+        ),
+        "qwen2.5-0.5b-safetensors": DefinicionModeloCatalogo(
+            id="qwen2.5-0.5b-safetensors",
+            nombre_legible="Qwen2.5 0.5B Instruct (Safetensors Nativo)",
+            categoria="chat",
+            cuantizacion="FP16/BF16",
+            idiomas_destacados="es, en, multilingüe",
+            repo_hf="Qwen/Qwen2.5-0.5B-Instruct",
+            filename="model.safetensors",
+            tamano_gb=0.98,
+            ram_minima_gb=2.0,
+            ram_recomendada_gb=4.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Pesos Safetensors de Qwen2.5 0.5B para carga directa en tensores.",
+            formato="safetensors",
         ),
     }
 
@@ -418,6 +717,7 @@ class CatalogoModelos:
         filename_seguro = validar_filename_hf(filename)
         revision_segura = validar_revision_hf(revision)
 
+        formato = "safetensors" if filename_seguro.lower().endswith((".safetensors", ".bin", ".pt")) else "gguf"
         nuevo = DefinicionModeloCatalogo(
             id=id_unico.strip(),
             nombre_legible=nombre_legible.strip(),
@@ -436,6 +736,7 @@ class CatalogoModelos:
             descripcion=descripcion.strip(),
             sha256_esperado=sha256_esperado.strip().lower() if sha256_esperado else None,
             revision=revision_segura,
+            formato=formato,
         )
         cls.MODELOS[id_unico] = nuevo
         return nuevo
@@ -458,6 +759,30 @@ class CestaDescarga:
         # Margen de seguridad del 10%
         suficiente = libre_gb >= (self.tamano_total_gb * 1.1)
         return suficiente, round(libre_gb, 2)
+
+
+def validar_archivo_gguf(ruta: Path, tamano_minimo_gb: float = 0.0) -> tuple[bool, str]:
+    """Verifica que el archivo exista, tenga cabecera binaria GGUF válida y no sea una página HTML de error."""
+    if not ruta.exists() or not ruta.is_file():
+        return False, f"El archivo '{ruta.name}' no existe en disco."
+    tamano_bytes = ruta.stat().st_size
+    if tamano_bytes < 4:
+        return False, f"El archivo '{ruta.name}' está vacío ({tamano_bytes} bytes)."
+    try:
+        with open(ruta, "rb") as f:
+            cabecera = f.read(4)
+            if cabecera != b"GGUF":
+                f.seek(0)
+                muestra = f.read(512).decode("utf-8", errors="replace")
+                if "<html" in muestra.lower() or "<!doctype" in muestra.lower():
+                    return False, f"El archivo '{ruta.name}' es una página HTML de Hugging Face (modelo restringido/gated o error HTTP 401/403)."
+                if "{" in muestra and "error" in muestra.lower():
+                    return False, f"El archivo '{ruta.name}' contiene un error JSON de Hugging Face: {muestra.strip()[:100]}"
+                return False, f"Cabecera GGUF inválida ({cabecera!r}). El archivo no es un modelo GGUF válido."
+    except Exception as e:
+        return False, f"No se pudo leer la cabecera de '{ruta.name}': {e}"
+
+    return True, "OK"
 
 
 class DescargadorModelos:
@@ -501,7 +826,14 @@ class DescargadorModelos:
                 print(f"[{pct:.1f}%] {msg}")
 
         if ruta_archivo_final.exists() and ruta_archivo_final.stat().st_size > 0:
-            if modelo.sha256_esperado:
+            es_val, mot_inval = validar_archivo_gguf(ruta_archivo_final, modelo.tamano_gb)
+            if not es_val:
+                log(f"Archivo previo descartado por inválido/incompleto ({mot_inval}). Re-descargando...", 0.0)
+                try:
+                    ruta_archivo_final.unlink()
+                except OSError:
+                    pass
+            elif modelo.sha256_esperado:
                 hash_actual = calcular_sha256_archivo(ruta_archivo_final)
                 if not hmac.compare_digest(hash_actual.lower(), modelo.sha256_esperado.lower()):
                     raise ValueError(
@@ -509,10 +841,12 @@ class DescargadorModelos:
                         f"esperado {modelo.sha256_esperado}, actual {hash_actual}"
                     )
                 log(f"El modelo ya está presente y verificado con SHA-256 en el Búnker: {ruta_archivo_final.name}", 100.0)
+                self._registrar_en_cache(modelo, str(ruta_archivo_final))
+                return ruta_archivo_final
             else:
-                log(f"El modelo ya está presente en el Búnker (sin hash SHA-256 verificado): {ruta_archivo_final.name}", 100.0)
-            self._registrar_en_cache(modelo, str(ruta_archivo_final))
-            return ruta_archivo_final
+                log(f"El modelo ya está presente y con cabecera GGUF válida: {ruta_archivo_final.name}", 100.0)
+                self._registrar_en_cache(modelo, str(ruta_archivo_final))
+                return ruta_archivo_final
 
         url_hf = f"https://huggingface.co/{modelo.repo_hf}/resolve/{modelo.revision}/{modelo.filename}"
 
@@ -545,6 +879,14 @@ class DescargadorModelos:
                         raise err_primario
                 else:
                     raise err_primario
+
+            es_val_desc, mot_desc = validar_archivo_gguf(ruta_archivo_final, modelo.tamano_gb)
+            if not es_val_desc:
+                try:
+                    ruta_archivo_final.unlink()
+                except OSError:
+                    pass
+                raise ValueError(f"Fallo de integridad tras descarga en {modelo.filename}: {mot_desc}")
 
             if modelo.sha256_esperado:
                 log(f"Modelo {modelo.filename} verificado criptográficamente con SHA-256 e integrado.", 100.0)

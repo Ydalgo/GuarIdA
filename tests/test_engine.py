@@ -49,6 +49,33 @@ class TestLlamaServer(unittest.TestCase):
         self.assertIn("qwen2.5", cmd)
         self.assertIn("--no-webui", cmd)
 
+    def test_construir_comando_optimizaciones_avanzadas(self):
+        config = LlamaServerConfig(
+            modelo_path=Path("coder.gguf"),
+            threads_batch=8,
+            ctx_shift=True,
+            cache_reuse=256,
+            lookup_cache=5,
+            model_draft_path=Path("draft.gguf"),
+            draft_max=16,
+            mlock=True,
+            no_mmap=True,
+        )
+        cmd = config.construir_comando()
+        self.assertIn("-tb", cmd)
+        self.assertIn("8", cmd)
+        self.assertIn("--ctx-shift", cmd)
+        self.assertIn("--cache-reuse", cmd)
+        self.assertIn("256", cmd)
+        self.assertIn("--lookup-cache", cmd)
+        self.assertIn("5", cmd)
+        self.assertIn("-md", cmd)
+        self.assertIn("draft.gguf", cmd)
+        self.assertIn("--draft-max", cmd)
+        self.assertIn("16", cmd)
+        self.assertIn("--mlock", cmd)
+        self.assertIn("--no-mmap", cmd)
+
     def test_desde_afinamiento_con_cache_optima(self):
         mock_cache = MagicMock()
         mock_cache.obtener_configuracion_optima.return_value = {
@@ -89,6 +116,8 @@ class TestLlamaServer(unittest.TestCase):
         config = LlamaServerConfig(modelo_path=Path("dummy.gguf"))
 
         self.assertFalse(gestor.esta_activo())
+        self.assertEqual(gestor.host, "127.0.0.1")
+        self.assertEqual(gestor.port, 8083)
         res = gestor.iniciar_servidor(config)
 
         self.assertEqual(res["pid"], 12345)
