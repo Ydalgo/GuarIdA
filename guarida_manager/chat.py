@@ -750,7 +750,7 @@ def ejecutar_chat_terminal(
     print_func(f"    * ID de Sesión Persistente:   {sesion_id_activa}")
     print_func(f"  Servidor HTTP Local:            {cli.base_url}")
     print_func("  " + "-" * 76)
-    print_func("  [AVISO]: Para salir del chat escribe el comando '/quit'.")
+    print_func("  [AVISO]: Para salir del chat escribe el comando '/quit'. Usa '/ficheros' para ver los archivos.")
     print_func("=" * 80)
 
     prompt_sistema = (
@@ -797,6 +797,17 @@ def ejecutar_chat_terminal(
                 print_func(
                     f"  [!] {res_idx['errores_embedding']} elementos sin vector: se usará ranking léxico para ellos."
                 )
+            docs_idx = cache.listar_documentos_proyecto(proy_activo["id"])
+            if docs_idx:
+                lineas_docs = [f"- {d['ruta_relativa']} ({d['tipo_documento']})" for d in docs_idx[:60]]
+                extra_aviso = f"\n  (y {len(docs_idx) - 60} ficheros más)" if len(docs_idx) > 60 else ""
+                prompt_sistema += (
+                    f"\n\nTienes acceso y visibilidad completa sobre los siguientes {len(docs_idx)} ficheros del proyecto '{proy_activo['nombre']}':\n"
+                    + "\n".join(lineas_docs)
+                    + extra_aviso
+                    + "\nCuando el usuario pregunte qué ficheros ves o sobre qué documentos tienes acceso, responde confirmando estos documentos."
+                )
+                historial[0]["content"] = prompt_sistema
         except Exception as e_idx:
             logger.error(f"Fallo al indexar proyecto: {e_idx}", exc_info=True)
             print_func(f"[!] No se pudo indexar el proyecto: {e_idx}")
@@ -816,6 +827,20 @@ def ejecutar_chat_terminal(
             if msg.lower() in ("/quit", "quit"):
                 print_func("\n[OK] Comando '/quit' recibido. Saliendo del chat...")
                 break
+
+            # Comando interactivo para listar ficheros del proyecto
+            if msg.lower() in ("/ficheros", "/archivos", "/files"):
+                if proy_activo:
+                    docs_cmd = cache.listar_documentos_proyecto(proy_activo["id"])
+                    if docs_cmd:
+                        print_func(f"\n[Ficheros indexados en el proyecto '{proy_activo['nombre']}'] ({len(docs_cmd)} archivos):")
+                        for d in docs_cmd:
+                            print_func(f"  * {d['ruta_relativa']:<50} [{d['tipo_documento']}] ({d['nodos_ast_count']} fragmentos)")
+                    else:
+                        print_func(f"\n[!] No hay archivos indexados en el proyecto '{proy_activo['nombre']}'.")
+                else:
+                    print_func("\n[!] No hay ningún proyecto activo asociado a esta sesión de chat.")
+                continue
 
             # Búsqueda semántica híbrida si hay proyecto activo (RAG Local)
             fuentes_turno: list[dict[str, Any]] = []

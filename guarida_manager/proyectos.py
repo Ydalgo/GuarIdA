@@ -10,6 +10,8 @@ import json
 import os
 import re
 import uuid
+import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,9 +46,13 @@ EXTENSIONES_CODIGO_GENERICO = {
     ".cs", ".kt", ".swift", ".php", ".rb", ".sh", ".ps1", ".lua",
 }
 
-EXTENSIONES_SOPORTADAS = {
-    ".py", ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
-} | EXTENSIONES_CODIGO_GENERICO
+EXTENSIONES_DOCUMENTOS = {".pdf", ".docx", ".odt"}
+
+EXTENSIONES_SOPORTADAS = (
+    {".py", ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
+    | EXTENSIONES_CODIGO_GENERICO
+    | EXTENSIONES_DOCUMENTOS
+)
 
 # Archivos que pueden contener secretos: nunca se indexan (evita que acaben en un prompt).
 NOMBRES_SENSIBLES = {
@@ -57,6 +63,7 @@ NOMBRES_SENSIBLES = {
 SUFIJOS_SENSIBLES = (".pem", ".key", ".p12", ".pfx", ".jks", ".kdbx", ".db", ".sqlite", ".sqlite3", ".gguf", ".safetensors")
 PREFIJOS_SENSIBLES = (".env.",)
 TAMANO_MAX_ARCHIVO_BYTES = 1_000_000
+TAMANO_MAX_DOCUMENTO_BYTES = 25_000_000
 RRF_K = 60
 # Los modelos de embeddings no causales exigen que el texto quepa en un solo ubatch (~512 tokens).
 LIMITE_CHARS_EMBEDDING = 1800
@@ -88,6 +95,75 @@ def ruta_dentro_de_base(ruta: Path, base: Path) -> bool:
         return True
     except (ValueError, OSError):
         return False
+
+
+def extraer_texto_docx(ruta: Path) -> str:
+    """Extrae texto de documentos Microsoft Word (.docx) sin dependencias externas."""
+    try:
+        with zipfile.ZipFile(ruta, "r") as z:
+            if "word/document.xml" not in z.namelist():
+                return ""
+            xml_content = z.read("word/document.xml")
+            root = ET.fromstring(xml_content)
+            parrafos = []
+            for elem in root.iter():
+                if elem.tag.endswith("}p"):
+                    textos = [sub.text for sub in elem.iter() if sub.tag.endswith("}t") and sub.text]
+                    if textos:
+                        parrafos.append("".join(textos))
+            return "\n\n".join(parrafos)
+    except Exception as e:
+        logger.warning(f"Error al extraer texto DOCX de {ruta}: {e}")
+        return ""
+
+
+def extraer_texto_odt(ruta: Path) -> str:
+    """Extrae texto de documentos OpenDocument (.odt) sin dependencias externas."""
+    try:
+        with zipfile.ZipFile(ruta, "r") as z:
+            if "content.xml" not in z.namelist():
+                return ""
+            xml_content = z.read("content.xml")
+            root = ET.fromstring(xml_content)
+            parrafos = []
+            for elem in root.iter():
+                if elem.tag.endswith(("}p", "}h")):
+                    txt = "".join(elem.itertext()).strip()
+                    if txt:
+                        parrafos.append(txt)
+            return "\n\n".join(parrafos)
+    except Exception as e:
+        logger.warning(f"Error al extraer texto ODT de {ruta}: {e}")
+        return ""
+
+
+def extraer_texto_pdf(ruta: Path) -> str:
+    """Extrae texto estructurado por páginas de un archivo PDF usando pypdf."""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(ruta))
+        paginas_texto = []
+        for idx, page in enumerate(reader.pages, start=1):
+            txt = page.extract_text() or ""
+            txt = txt.strip()
+            if txt:
+                paginas_texto.append(f"# Página {idx}\n{txt}")
+        return "\n\n".join(paginas_texto)
+    except Exception as e:
+        logger.warning(f"Error al extraer texto PDF de {ruta}: {e}")
+        return ""
+
+
+def extraer_contenido_archivo(ruta: Path) -> str:
+    """Extrae el contenido textual según la extensión (código, texto plano u ofimática)."""
+    sufijo = ruta.suffix.lower()
+    if sufijo == ".pdf":
+        return extraer_texto_pdf(ruta)
+    if sufijo == ".docx":
+        return extraer_texto_docx(ruta)
+    if sufijo == ".odt":
+        return extraer_texto_odt(ruta)
+    return ruta.read_text(encoding="utf-8", errors="replace")
 
 
 @dataclass
@@ -324,7 +400,12 @@ class GestorProyectos:
                         continue
                     if p.suffix.lower() not in exts:
                         continue
-                    if p.stat().st_size > TAMANO_MAX_ARCHIVO_BYTES:
+                    limite_bytes = (
+                        TAMANO_MAX_DOCUMENTO_BYTES
+                        if p.suffix.lower() in EXTENSIONES_DOCUMENTOS
+                        else TAMANO_MAX_ARCHIVO_BYTES
+                    )
+                    if p.stat().st_size > limite_bytes:
                         omitidos_seguridad += 1
                         continue
                 except OSError:
@@ -356,7 +437,7 @@ class GestorProyectos:
                 callback_progreso(f"Indexando {ruta_rel}...", pct)
 
             try:
-                contenido = archivo.read_text(encoding="utf-8", errors="replace")
+                contenido = extraer_contenido_archivo(archivo)
             except Exception:
                 continue
 
@@ -368,6 +449,8 @@ class GestorProyectos:
                 tipo_doc = "codigo_python"
             elif sufijo in EXTENSIONES_CODIGO_GENERICO:
                 tipo_doc = "codigo_generico"
+            elif sufijo in EXTENSIONES_DOCUMENTOS:
+                tipo_doc = "documento_ofimatico"
             else:
                 tipo_doc = "documento_texto"
             nodos_en_archivo = 0

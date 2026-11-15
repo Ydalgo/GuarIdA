@@ -6,6 +6,9 @@ from pathlib import Path
 from guarida_manager.cache import GestorCache
 from guarida_manager.proyectos import (
     GestorProyectos,
+    extraer_contenido_archivo,
+    extraer_texto_docx,
+    extraer_texto_odt,
     fragmentar_documento_texto,
 )
 
@@ -280,6 +283,67 @@ class TestProyectosCorrecciones(TestProyectosNotebookLM):
         self.assertIn("DEMOSTRACIÓN DIDÁCTICA", txt)
         self.assertIn("GestorTokens", txt)
         self.assertIn("autenticacion.py", txt)
+
+
+    def test_extraccion_docx_y_odt(self):
+        import zipfile
+
+        # Crear archivo .docx de prueba
+        ruta_docx = Path(self.temp_dir) / "manual.docx"
+        doc_xml = (
+            b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            b'<w:body>'
+            b'<w:p><w:r><w:t>Procedimiento de Expedicion TIE</w:t></w:r></w:p>'
+            b'<w:p><w:r><w:t>Requisitos y tasas aplicables.</w:t></w:r></w:p>'
+            b'</w:body></w:document>'
+        )
+        with zipfile.ZipFile(ruta_docx, "w") as z:
+            z.writestr("word/document.xml", doc_xml)
+
+        txt_docx = extraer_texto_docx(ruta_docx)
+        self.assertIn("Procedimiento de Expedicion TIE", txt_docx)
+        self.assertIn("Requisitos y tasas aplicables.", txt_docx)
+
+        # Crear archivo .odt de prueba
+        ruta_odt = Path(self.temp_dir) / "guia.odt"
+        odt_xml = (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+            b'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+            b'<office:body><office:text>'
+            b'<text:h>Instrucciones de Huella</text:h>'
+            b'<text:p>Cita previa obligatoria en extranjeria.</text:p>'
+            b'</office:text></office:body></office:document-content>'
+        )
+        with zipfile.ZipFile(ruta_odt, "w") as z:
+            z.writestr("content.xml", odt_xml)
+
+        txt_odt = extraer_texto_odt(ruta_odt)
+        self.assertIn("Instrucciones de Huella", txt_odt)
+        self.assertIn("Cita previa obligatoria en extranjeria.", txt_odt)
+
+    def test_indexacion_documentos_ofimaticos(self):
+        import zipfile
+
+        ruta_docx = self.dir_proyecto / "normativa.docx"
+        doc_xml = (
+            b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            b'<w:body>'
+            b'<w:p><w:r><w:t>Manual Oficial TIE 2026</w:t></w:r></w:p>'
+            b'</w:body></w:document>'
+        )
+        with zipfile.ZipFile(ruta_docx, "w") as z:
+            z.writestr("word/document.xml", doc_xml)
+
+        proy = self.gestor.crear_proyecto(nombre="Proy Ofimatica", ruta_directorio=self.dir_proyecto)
+        res = self.gestor.escanear_e_indexar_proyecto(proy.id)
+        docs = self.cache.listar_documentos_proyecto(proy.id)
+        nombres = [d["ruta_relativa"] for d in docs]
+        self.assertIn("normativa.docx", nombres)
+        doc_normativa = next(d for d in docs if d["ruta_relativa"] == "normativa.docx")
+        self.assertEqual(doc_normativa["tipo_documento"], "documento_ofimatico")
 
 
 if __name__ == "__main__":
