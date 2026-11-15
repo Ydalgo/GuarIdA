@@ -8,6 +8,7 @@ y mantener sesiones de chat persistentes con citas de fuentes verificables (RAG 
 import hashlib
 import json
 import os
+import pickle
 import re
 import time
 import uuid
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from guarida_manager import DIRECTORIO_CACHE_PROYECTOS
 from guarida_manager.arbol_nodos import (
     ArbolNodosCodigo,
     NodoAST,
@@ -521,6 +523,11 @@ class GestorProyectos:
 
     def __init__(self, gestor_cache: Optional[GestorCache] = None) -> None:
         self.cache = gestor_cache or GestorCache()
+        ruta_db = getattr(self.cache, "ruta_db", None)
+        if isinstance(ruta_db, (str, Path)):
+            self.dir_cache_snapshots = Path(ruta_db).parent / "cache_proyectos"
+        else:
+            self.dir_cache_snapshots = Path.home() / ".guarida" / "cache_proyectos"
         # Árboles AST cargados en memoria por proyecto {proyecto_id: ArbolNodosCodigo}
         self._arboles_codigo: dict[str, ArbolNodosCodigo] = {}
         # Chunks de documentos texto por proyecto {proyecto_id: list[ChunkDocumento]}
@@ -559,6 +566,15 @@ class GestorProyectos:
         self._arboles_codigo.pop(proyecto_id, None)
         self._chunks_texto.pop(proyecto_id, None)
         self._motores_hibridos.pop(proyecto_id, None)
+        try:
+            if self.dir_cache_snapshots.exists():
+                for f_snap in self.dir_cache_snapshots.glob(f"{proyecto_id}_*.pkl"):
+                    try:
+                        f_snap.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
         return self.cache.eliminar_proyecto(proyecto_id)
 
     def escanear_e_indexar_proyecto(
@@ -623,7 +639,51 @@ class GestorProyectos:
             return {
                 "total_archivos": 0, "nodos_ast": 0, "chunks_texto": 0, "archivos_procesados": 0,
                 "archivos_sin_cambios": 0, "omitidos_seguridad": omitidos_seguridad,
+                "snapshot_reutilizado": False,
             }
+
+        # Verificación ultrarrápida de Snapshot en Caché (<0.05s) por mtime y tamaño de archivos
+        firma_items: list[tuple[str, int, int]] = []
+        for p in archivos_candidatos:
+            try:
+                st = p.stat()
+                firma_items.append((str(p.relative_to(ruta_base)), st.st_mtime_ns, st.st_size))
+            except OSError:
+                continue
+        firma_items.sort()
+        firma_hash = hashlib.sha256(
+            json.dumps(firma_items).encode("utf-8") + f":{modelo_emb_id}".encode("utf-8")
+        ).hexdigest()
+
+        slug_emb = re.sub(r"[^\w\-.]", "_", modelo_emb_id or "default")
+        ruta_snapshot = self.dir_cache_snapshots / f"{proyecto_id}_{slug_emb}.pkl"
+
+        try:
+            if ruta_snapshot.exists():
+                with open(ruta_snapshot, "rb") as f_snap:
+                    datos_snap = pickle.load(f_snap)
+                if datos_snap.get("firma_hash") == firma_hash:
+                    arbol_snap = datos_snap.get("arbol", ArbolNodosCodigo())
+                    chunks_snap = datos_snap.get("chunks_docs", [])
+                    motor_snap = datos_snap.get("motor_hibrido")
+                    self._arboles_codigo[proyecto_id] = arbol_snap
+                    self._chunks_texto[proyecto_id] = chunks_snap
+                    if motor_snap is not None:
+                        self._motores_hibridos[proyecto_id] = motor_snap
+                    if callback_progreso:
+                        callback_progreso(
+                            f"Índice cargado instantáneamente desde snapshot ({len(chunks_snap)} fragmentos, sin cambios)",
+                            100.0,
+                        )
+                    stats_snap = dict(datos_snap.get("estadisticas", {}))
+                    stats_snap["snapshot_reutilizado"] = True
+                    stats_snap["archivos_procesados"] = total_archivos
+                    stats_snap["archivos_sin_cambios"] = total_archivos
+                    stats_snap["embeddings_calculados"] = 0
+                    stats_snap["embeddings_reutilizados"] = len(chunks_snap) + len([n for n in arbol_snap.nodos.values() if n.embedding])
+                    return stats_snap
+        except (OSError, Exception) as e_snap:
+            logger.debug(f"Error cargando snapshot de proyecto '{proyecto_id}': {e_snap}")
 
         arbol = ArbolNodosCodigo()
         chunks_docs: list[ChunkDocumento] = []
@@ -809,7 +869,26 @@ class GestorProyectos:
             "embeddings_calculados": embeddings_calculados,
             "embeddings_reutilizados": embeddings_reutilizados,
             "errores_embedding": errores_embedding,
+            "snapshot_reutilizado": False,
         }
+
+        try:
+            self.dir_cache_snapshots.mkdir(parents=True, exist_ok=True)
+            with open(ruta_snapshot, "wb") as f_snap:
+                pickle.dump(
+                    {
+                        "firma_hash": firma_hash,
+                        "arbol": arbol,
+                        "chunks_docs": chunks_docs,
+                        "motor_hibrido": self._motores_hibridos.get(proyecto_id),
+                        "estadisticas": resumen,
+                    },
+                    f_snap,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+        except (OSError, Exception) as e_save_snap:
+            logger.debug(f"No se pudo guardar snapshot de proyecto '{proyecto_id}': {e_save_snap}")
+
         logger.info(f"Indexación completada para proyecto '{proyecto_id}': {resumen}")
         return resumen
 

@@ -791,8 +791,10 @@ def ejecutar_chat_terminal(
                 modelo_emb_id=motor_emb_id or "",
                 callback_progreso=callback_progreso_chat,
             )
+            if res_idx.get("snapshot_reutilizado"):
+                print_func("  [Caché Snapshot] Repositorio sin cambios: carga instantánea desde disco completada.")
             print_func(
-                f"  Archivos: {res_idx['archivos_procesados']} ({res_idx['archivos_sin_cambios']} sin cambios) | "
+                f"  Archivos: {res_idx.get('archivos_procesados', res_idx.get('total_archivos', 0))} ({res_idx['archivos_sin_cambios']} sin cambios) | "
                 f"Nodos AST: {res_idx['nodos_ast']} | Fragmentos: {res_idx['chunks_texto']} | "
                 f"Embeddings nuevos/reutilizados: {res_idx.get('embeddings_calculados', 0)}/"
                 f"{res_idx.get('embeddings_reutilizados', 0)} | "

@@ -179,6 +179,25 @@ class TestProyectosCorrecciones(TestProyectosNotebookLM):
         r3 = gestor2.escanear_e_indexar_proyecto(proy.id, funcion_embedding=emb, modelo_emb_id="m2")
         self.assertGreater(r3["embeddings_calculados"], 0)
 
+    def test_snapshot_cache_carga_instantanea_y_reutilizacion(self):
+        proy = self.gestor.crear_proyecto("SnapTest", self.dir_proyecto)
+        # Primera indexación (construye snapshot)
+        r1 = self.gestor.escanear_e_indexar_proyecto(proy.id, modelo_emb_id="emb_snap")
+        self.assertFalse(r1.get("snapshot_reutilizado", False))
+
+        # Segunda indexación sin cambios: debe cargar snapshot instantáneamente
+        gestor2 = GestorProyectos(gestor_cache=self.cache)
+        r2 = gestor2.escanear_e_indexar_proyecto(proy.id, modelo_emb_id="emb_snap")
+        self.assertTrue(r2.get("snapshot_reutilizado", False))
+        self.assertEqual(r2["embeddings_calculados"], 0)
+        self.assertEqual(len(gestor2._chunks_texto[proy.id]), len(self.gestor._chunks_texto[proy.id]))
+
+        # Modificación de archivo: invalida el snapshot y vuelve a procesar
+        (self.dir_proyecto / "README.md").write_text("# Modificado\nTexto nuevo", encoding="utf-8")
+        gestor3 = GestorProyectos(gestor_cache=self.cache)
+        r3 = gestor3.escanear_e_indexar_proyecto(proy.id, modelo_emb_id="emb_snap")
+        self.assertFalse(r3.get("snapshot_reutilizado", False))
+
     def test_busqueda_solo_lexica_sin_embeddings(self):
         proy = self.gestor.crear_proyecto("Lex", self.dir_proyecto)
         self.gestor.escanear_e_indexar_proyecto(proy.id)
