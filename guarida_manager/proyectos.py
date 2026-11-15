@@ -42,17 +42,22 @@ DIRECTORIOS_IGNORADOS = {
     "brain", "logs", "binarios", ".ssh", ".gnupg", ".aws", ".azure", ".kube",
 }
 
+EXTENSIONES_SCRIPTS = {".bat", ".cmd", ".pyw"}
+EXTENSIONES_HOJAS_CALCULO = {".xlsx", ".ods", ".xls", ".csv", ".tsv"}
+EXTENSIONES_DOCUMENTOS_ANTIGUOS = {".doc"}
+EXTENSIONES_DOCUMENTOS = {".pdf", ".docx", ".odt"} | EXTENSIONES_HOJAS_CALCULO | EXTENSIONES_DOCUMENTOS_ANTIGUOS
+EXTENSIONES_ARCHIVOS_COMPRIMIDOS = {".zip", ".tar", ".gz", ".tgz", ".bz2", ".7z", ".rar"}
+
 EXTENSIONES_CODIGO_GENERICO = {
     ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java", ".js", ".ts", ".tsx", ".jsx",
     ".cs", ".kt", ".swift", ".php", ".rb", ".sh", ".ps1", ".lua",
-}
-
-EXTENSIONES_DOCUMENTOS = {".pdf", ".docx", ".odt"}
+} | EXTENSIONES_SCRIPTS
 
 EXTENSIONES_SOPORTADAS = (
     {".py", ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
     | EXTENSIONES_CODIGO_GENERICO
     | EXTENSIONES_DOCUMENTOS
+    | EXTENSIONES_ARCHIVOS_COMPRIMIDOS
 )
 
 # Archivos que pueden contener secretos: nunca se indexan (evita que acaben en un prompt).
@@ -155,6 +160,196 @@ def extraer_texto_pdf(ruta: Path) -> str:
         return ""
 
 
+def extraer_texto_xlsx(ruta: Path) -> str:
+    """Extrae texto y datos tabulares de hojas de cálculo Excel (.xlsx) sin dependencias."""
+    try:
+        with zipfile.ZipFile(ruta, "r") as z:
+            nombres = z.namelist()
+            shared_strings = []
+            if "xl/sharedStrings.xml" in nombres:
+                root_ss = ET.fromstring(z.read("xl/sharedStrings.xml"))
+                for elem in root_ss.iter():
+                    if elem.tag.endswith("}si"):
+                        t_parts = [t.text for t in elem.iter() if t.tag.endswith("}t") and t.text]
+                        shared_strings.append("".join(t_parts))
+
+            hojas_texto = []
+            sheets = [f for f in nombres if f.startswith("xl/worksheets/sheet") and f.endswith(".xml")]
+            for idx_h, sheet_file in enumerate(sorted(sheets), start=1):
+                root_s = ET.fromstring(z.read(sheet_file))
+                filas_texto = []
+                for row in root_s.iter():
+                    if row.tag.endswith("}row"):
+                        celdas = []
+                        for c in row.iter():
+                            if c.tag.endswith("}c"):
+                                tipo = c.attrib.get("t")
+                                v_elem = None
+                                for sub in c:
+                                    if sub.tag.endswith("}v"):
+                                        v_elem = sub
+                                        break
+                                if v_elem is not None and v_elem.text:
+                                    val = v_elem.text
+                                    if tipo == "s" and val.isdigit():
+                                        idx_s = int(val)
+                                        if 0 <= idx_s < len(shared_strings):
+                                            val = shared_strings[idx_s]
+                                    celdas.append(val)
+                                else:
+                                    inlines = [t.text for t in c.iter() if t.tag.endswith("}t") and t.text]
+                                    if inlines:
+                                        celdas.append("".join(inlines))
+                        if celdas:
+                            filas_texto.append(" | ".join(celdas))
+                if filas_texto:
+                    hojas_texto.append(f"# Hoja {idx_h}\n" + "\n".join(filas_texto))
+
+            if hojas_texto:
+                return "\n\n".join(hojas_texto)
+            if shared_strings:
+                return "\n".join(shared_strings)
+            return ""
+    except Exception as e:
+        logger.warning(f"Error al extraer texto XLSX de {ruta}: {e}")
+        return ""
+
+
+def extraer_texto_ods(ruta: Path) -> str:
+    """Extrae texto y datos tabulares de hojas OpenDocument (.ods) sin dependencias."""
+    try:
+        with zipfile.ZipFile(ruta, "r") as z:
+            if "content.xml" not in z.namelist():
+                return ""
+            root = ET.fromstring(z.read("content.xml"))
+            hojas_texto = []
+            for tabla in root.iter():
+                if tabla.tag.endswith("}table"):
+                    nombre_hoja = tabla.attrib.get("{urn:oasis:names:tc:opendocument:xmlns:table:1.0}name", "Hoja")
+                    filas = []
+                    for fila in tabla.iter():
+                        if fila.tag.endswith("}table-row"):
+                            celdas = []
+                            for c in fila.iter():
+                                if c.tag.endswith("}table-cell"):
+                                    txt_celda = "".join(c.itertext()).strip()
+                                    if txt_celda:
+                                        celdas.append(txt_celda)
+                            if celdas:
+                                filas.append(" | ".join(celdas))
+                    if filas:
+                        hojas_texto.append(f"# {nombre_hoja}\n" + "\n".join(filas))
+            return "\n\n".join(hojas_texto)
+    except Exception as e:
+        logger.warning(f"Error al extraer texto ODS de {ruta}: {e}")
+        return ""
+
+
+def extraer_texto_ole(ruta: Path) -> str:
+    """Extrae cadenas legibles de documentos binarios OLE2 (.doc, .xls) sin dependencias."""
+    try:
+        raw = ruta.read_bytes()
+        cadenas_u16_raw = re.findall(rb"(?:[\x20-\x7e\xa1-\xff]\x00){4,}", raw)
+        cadenas_u16 = [c.decode("utf-16le", errors="ignore").strip() for c in cadenas_u16_raw]
+        cadenas_u16 = [c for c in cadenas_u16 if len(c) > 4 and any(ch.isalpha() for ch in c)]
+
+        cadenas_asc_raw = re.findall(rb"[\x20-\x7e\xa1-\xff]{6,}", raw)
+        cadenas_asc = [c.decode("latin-1", errors="ignore").strip() for c in cadenas_asc_raw]
+        cadenas_asc = [c for c in cadenas_asc if len(c) > 8 and any(ch.isalpha() for ch in c)]
+
+        cadenas_finales = []
+        candidatos = cadenas_u16 if len(cadenas_u16) > 20 else (cadenas_asc or cadenas_u16)
+        for cad in candidatos:
+            if not cad.startswith(("CompObj", "WordDocument", "SummaryInformation")):
+                cadenas_finales.append(cad)
+        return "\n".join(cadenas_finales)
+    except Exception as e:
+        logger.warning(f"Error al extraer texto binario OLE de {ruta}: {e}")
+        return ""
+
+
+def extraer_archivos_comprimidos(ruta: Path) -> list[tuple[str, str]]:
+    """Inspecciona y extrae contenido de archivos comprimidos (.zip, .tar, .7z, etc.)."""
+    sufijo = ruta.suffix.lower()
+    resultados: list[tuple[str, str]] = []
+
+    if sufijo == ".zip":
+        try:
+            with zipfile.ZipFile(ruta, "r") as z:
+                for info in z.infolist():
+                    if info.is_dir() or info.file_size > TAMANO_MAX_ARCHIVO_BYTES:
+                        continue
+                    p_sub = Path(info.filename)
+                    ext = p_sub.suffix.lower()
+                    if ext in EXTENSIONES_SOPORTADAS and ext not in EXTENSIONES_ARCHIVOS_COMPRIMIDOS:
+                        try:
+                            datos = z.read(info)
+                            if ext in EXTENSIONES_DOCUMENTOS:
+                                import tempfile
+                                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                                    tmp.write(datos)
+                                    tmp_path = Path(tmp.name)
+                                try:
+                                    txt = extraer_contenido_archivo(tmp_path)
+                                finally:
+                                    tmp_path.unlink(missing_ok=True)
+                            else:
+                                txt = datos.decode("utf-8", errors="replace")
+                            if txt.strip():
+                                resultados.append((info.filename, txt))
+                        except Exception:
+                            continue
+            return resultados
+        except Exception as e:
+            logger.warning(f"Error al leer ZIP {ruta}: {e}")
+            return []
+
+    if sufijo in {".tar", ".gz", ".tgz", ".bz2"}:
+        import tarfile
+        try:
+            with tarfile.open(ruta, "r:*") as t:
+                for member in t.getmembers():
+                    if not member.isfile() or member.size > TAMANO_MAX_ARCHIVO_BYTES:
+                        continue
+                    p_sub = Path(member.name)
+                    ext = p_sub.suffix.lower()
+                    if ext in EXTENSIONES_SOPORTADAS and ext not in EXTENSIONES_ARCHIVOS_COMPRIMIDOS:
+                        f = t.extractfile(member)
+                        if f:
+                            datos = f.read()
+                            txt = datos.decode("utf-8", errors="replace")
+                            if txt.strip():
+                                resultados.append((member.name, txt))
+            return resultados
+        except Exception as e:
+            logger.warning(f"Error al leer TAR {ruta}: {e}")
+            return []
+
+    if sufijo in {".7z", ".rar"}:
+        import shutil
+        import subprocess
+        tar_bin = shutil.which("tar")
+        if tar_bin:
+            try:
+                cmd_list = [tar_bin, "-tf", str(ruta)]
+                proc = subprocess.run(cmd_list, capture_output=True, text=True, errors="replace", timeout=15)
+                if proc.returncode == 0:
+                    for linea in proc.stdout.splitlines():
+                        sub_nom = linea.strip()
+                        if not sub_nom:
+                            continue
+                        ext = Path(sub_nom).suffix.lower()
+                        if ext in EXTENSIONES_SOPORTADAS and ext not in EXTENSIONES_ARCHIVOS_COMPRIMIDOS:
+                            cmd_extract = [tar_bin, "-xf", str(ruta), "-O", sub_nom]
+                            proc_ext = subprocess.run(cmd_extract, capture_output=True, text=True, errors="replace", timeout=15)
+                            if proc_ext.returncode == 0 and proc_ext.stdout.strip():
+                                resultados.append((sub_nom, proc_ext.stdout))
+            except Exception as e:
+                logger.warning(f"Error al leer {sufijo} mediante tar.exe en {ruta}: {e}")
+
+    return resultados
+
+
 def extraer_contenido_archivo(ruta: Path) -> str:
     """Extrae el contenido textual según la extensión (código, texto plano u ofimática)."""
     sufijo = ruta.suffix.lower()
@@ -164,6 +359,12 @@ def extraer_contenido_archivo(ruta: Path) -> str:
         return extraer_texto_docx(ruta)
     if sufijo == ".odt":
         return extraer_texto_odt(ruta)
+    if sufijo == ".xlsx":
+        return extraer_texto_xlsx(ruta)
+    if sufijo == ".ods":
+        return extraer_texto_ods(ruta)
+    if sufijo in {".doc", ".xls"}:
+        return extraer_texto_ole(ruta)
     return ruta.read_text(encoding="utf-8", errors="replace")
 
 
@@ -324,6 +525,8 @@ class GestorProyectos:
         self._arboles_codigo: dict[str, ArbolNodosCodigo] = {}
         # Chunks de documentos texto por proyecto {proyecto_id: list[ChunkDocumento]}
         self._chunks_texto: dict[str, list[ChunkDocumento]] = {}
+        # Motores híbridos HNSW/Matricial + BM25 en memoria RAM {proyecto_id: MotorBusquedaHibrida}
+        self._motores_hibridos: dict[str, Any] = {}
 
     def crear_proyecto(
         self,
@@ -355,6 +558,7 @@ class GestorProyectos:
     def eliminar_proyecto(self, proyecto_id: str) -> bool:
         self._arboles_codigo.pop(proyecto_id, None)
         self._chunks_texto.pop(proyecto_id, None)
+        self._motores_hibridos.pop(proyecto_id, None)
         return self.cache.eliminar_proyecto(proyecto_id)
 
     def escanear_e_indexar_proyecto(
@@ -441,6 +645,32 @@ class GestorProyectos:
                     pct,
                 )
 
+            sufijo = archivo.suffix.lower()
+            if sufijo in EXTENSIONES_ARCHIVOS_COMPRIMIDOS:
+                entradas_comp = extraer_archivos_comprimidos(archivo)
+                for sub_nom, sub_contenido in entradas_comp:
+                    sub_ruta_rel = f"{ruta_rel}::{sub_nom}"
+                    sub_sha = hashlib.sha256(sub_contenido.encode("utf-8")).hexdigest()
+                    if hashes_previos.get(sub_ruta_rel) == sub_sha:
+                        archivos_sin_cambios += 1
+                    sub_chunks = fragmentar_documento_texto(sub_ruta_rel, sub_contenido)
+                    chunks_docs.extend(sub_chunks)
+                    chunks_totales += len(sub_chunks)
+                    doc_reg = DocumentoProyectoRegistro(
+                        id=None,
+                        proyecto_id=proyecto_id,
+                        ruta_relativa=sub_ruta_rel,
+                        ruta_absoluta=f"{archivo}::{sub_nom}",
+                        tipo_documento="documento_comprimido",
+                        sha256=sub_sha,
+                        nodos_ast_count=len(sub_chunks),
+                        n_tokens_est=len(sub_contenido) // 4,
+                        fecha_indexacion=datetime.now(timezone.utc).isoformat(),
+                    )
+                    self.cache.guardar_documento_proyecto(doc_reg)
+                    archivos_procesados += 1
+                continue
+
             try:
                 contenido = extraer_contenido_archivo(archivo)
             except Exception:
@@ -449,11 +679,12 @@ class GestorProyectos:
             sha256_archivo = hashlib.sha256(contenido.encode("utf-8")).hexdigest()
             if hashes_previos.get(ruta_rel) == sha256_archivo:
                 archivos_sin_cambios += 1
-            sufijo = archivo.suffix.lower()
             if sufijo == ".py":
                 tipo_doc = "codigo_python"
             elif sufijo in EXTENSIONES_CODIGO_GENERICO:
                 tipo_doc = "codigo_generico"
+            elif sufijo in EXTENSIONES_HOJAS_CALCULO:
+                tipo_doc = "hoja_calculo"
             elif sufijo in EXTENSIONES_DOCUMENTOS:
                 tipo_doc = "documento_ofimatico"
             else:
@@ -547,6 +778,27 @@ class GestorProyectos:
         self._arboles_codigo[proyecto_id] = arbol
         self._chunks_texto[proyecto_id] = chunks_docs
 
+        try:
+            from guarida_manager.indice_hibrido import MotorBusquedaHibrida
+
+            motor_hibrido = MotorBusquedaHibrida(k_rrf=RRF_K)
+            elementos_todos: list[Any] = []
+            if arbol:
+                for n in arbol.nodos.values():
+                    if n.tipo != TipoNodoAST.MODULO:
+                        elementos_todos.append(n)
+            elementos_todos.extend(chunks_docs)
+
+            motor_hibrido.indexar_elementos(
+                elementos=elementos_todos,
+                obtener_texto=lambda e: getattr(e, "texto", None) or getattr(e, "codigo", "") or str(e),
+                obtener_vector=lambda e: getattr(e, "embedding", None),
+                obtener_id=lambda e: getattr(e, "id_chunk", None) or getattr(e, "id_nodo", str(id(e))),
+            )
+            self._motores_hibridos[proyecto_id] = motor_hibrido
+        except Exception as e_mh:
+            logger.debug(f"No se pudo inicializar motor híbrido acelerado: {e_mh}")
+
         resumen = {
             "total_archivos": total_archivos,
             "archivos_procesados": archivos_procesados,
@@ -587,54 +839,71 @@ class GestorProyectos:
         tokens_q = set(re.findall(r"[a-zA-Z0-9_]{3,}", consulta.lower()))
         consulta_min = consulta.lower()
 
-        # Elementos unificados: (objeto, simbolos léxicos, embedding)
-        elementos: list[tuple[Any, set[str], Optional[list[float]]]] = []
-        if arbol:
-            for nodo in arbol.nodos.values():
-                if nodo.tipo == TipoNodoAST.MODULO:
-                    continue
-                lex = set(nodo.simbolos) | set(nodo.nombre.lower().split("_"))
-                if nodo.nombre.lower() in consulta_min:
-                    lex.add("__nombre_exacto__")
-                elementos.append((nodo, lex, nodo.embedding))
-        for ch in chunks:
-            elementos.append((ch, ch.simbolos, ch.embedding))
+        motor = self._motores_hibridos.get(proyecto_id)
+        if motor is not None and motor.indice_bm25 is not None and motor.elementos:
+            mejores_objs = motor.buscar_hibrido(
+                consulta=consulta,
+                vector_consulta=vector_consulta,
+                top_k=top_k,
+            )
+            maximo_teorico = 2.0 / (RRF_K + 1)
+            candidatos_ast: list[tuple[NodoAST, float]] = []
+            candidatos_chunks: list[tuple[ChunkDocumento, float]] = []
+            for obj, punt in mejores_objs:
+                relevancia = round(min(1.0, punt / maximo_teorico), 4)
+                if isinstance(obj, NodoAST):
+                    candidatos_ast.append((obj, relevancia))
+                else:
+                    candidatos_chunks.append((obj, relevancia))
+        else:
+            # Elementos unificados: (objeto, simbolos léxicos, embedding)
+            elementos: list[tuple[Any, set[str], Optional[list[float]]]] = []
+            if arbol:
+                for nodo in arbol.nodos.values():
+                    if nodo.tipo == TipoNodoAST.MODULO:
+                        continue
+                    lex = set(nodo.simbolos) | set(nodo.nombre.lower().split("_"))
+                    if nodo.nombre.lower() in consulta_min:
+                        lex.add("__nombre_exacto__")
+                    elementos.append((nodo, lex, nodo.embedding))
+            for ch in chunks:
+                elementos.append((ch, ch.simbolos, ch.embedding))
 
-        ranking_denso: list[int] = []
-        if vector_consulta:
-            sims = [
-                (i, similitud_coseno(vector_consulta, emb))
-                for i, (_, _, emb) in enumerate(elementos)
-                if emb
-            ]
-            ranking_denso = [i for i, s in sorted(sims, key=lambda x: x[1], reverse=True) if s > 0.0]
+            ranking_denso: list[int] = []
+            if vector_consulta:
+                sims = [
+                    (i, similitud_coseno(vector_consulta, emb))
+                    for i, (_, _, emb) in enumerate(elementos)
+                    if emb
+                ]
+                ranking_denso = [i for i, s in sorted(sims, key=lambda x: x[1], reverse=True) if s > 0.0]
 
-        lexicos: list[tuple[int, float]] = []
-        for i, (_, lex, _) in enumerate(elementos):
-            puntos = float(len(tokens_q & lex))
-            if "__nombre_exacto__" in lex:
-                puntos += 3.0
-            if puntos > 0:
-                lexicos.append((i, puntos))
-        ranking_lexico = [i for i, _ in sorted(lexicos, key=lambda x: x[1], reverse=True)]
+            lexicos: list[tuple[int, float]] = []
+            for i, (_, lex, _) in enumerate(elementos):
+                puntos = float(len(tokens_q & lex))
+                if "__nombre_exacto__" in lex:
+                    puntos += 3.0
+                if puntos > 0:
+                    lexicos.append((i, puntos))
+            ranking_lexico = [i for i, _ in sorted(lexicos, key=lambda x: x[1], reverse=True)]
 
-        puntuacion_rrf: dict[int, float] = {}
-        for ranking in (ranking_denso, ranking_lexico):
-            for pos, idx in enumerate(ranking, start=1):
-                puntuacion_rrf[idx] = puntuacion_rrf.get(idx, 0.0) + 1.0 / (RRF_K + pos)
+            puntuacion_rrf: dict[int, float] = {}
+            for ranking in (ranking_denso, ranking_lexico):
+                for pos, idx in enumerate(ranking, start=1):
+                    puntuacion_rrf[idx] = puntuacion_rrf.get(idx, 0.0) + 1.0 / (RRF_K + pos)
 
-        maximo_teorico = 2.0 / (RRF_K + 1)
-        mejores = sorted(puntuacion_rrf.items(), key=lambda x: x[1], reverse=True)[:top_k]
+            maximo_teorico = 2.0 / (RRF_K + 1)
+            mejores = sorted(puntuacion_rrf.items(), key=lambda x: x[1], reverse=True)[:top_k]
 
-        candidatos_ast: list[tuple[NodoAST, float]] = []
-        candidatos_chunks: list[tuple[ChunkDocumento, float]] = []
-        for idx, punt in mejores:
-            relevancia = round(min(1.0, punt / maximo_teorico), 4)
-            obj = elementos[idx][0]
-            if isinstance(obj, NodoAST):
-                candidatos_ast.append((obj, relevancia))
-            else:
-                candidatos_chunks.append((obj, relevancia))
+            candidatos_ast = []
+            candidatos_chunks = []
+            for idx, punt in mejores:
+                relevancia = round(min(1.0, punt / maximo_teorico), 4)
+                obj = elementos[idx][0]
+                if isinstance(obj, NodoAST):
+                    candidatos_ast.append((obj, relevancia))
+                else:
+                    candidatos_chunks.append((obj, relevancia))
 
         bloques_contexto: list[str] = []
 
