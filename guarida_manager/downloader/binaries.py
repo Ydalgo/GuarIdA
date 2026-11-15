@@ -36,16 +36,17 @@ class GestorBinariosLlama:
     BUILD_PREDETERMINADO = "b12017"
     REPO_GITHUB = "ggml-org/llama.cpp"
 
+    # SHA-256 oficiales extraídos del campo `digest` de los assets de la release b12017
+    # (API de GitHub: ggml-org/llama.cpp). Verificados el 2026-11-15.
     CHECKSUMS_CONOCIDOS = {
         # llama.cpp b12017 Windows
         "llama-b12017-bin-win-vulkan-x64.zip": "e3d43788fed7b2e5983320975cb21d91fbc2579698a497f0f8cecbe9c029312b",
-        "llama-b12017-bin-win-avx2-x64.zip": "e89d351a603e91a9e3e944c4c4c4ccf5b4af6acbd44c5434b61bacfa3999b1f6",
         "llama-b12017-bin-win-cpu-x64.zip": "e89d351a603e91a9e3e944c4c4c4ccf5b4af6acbd44c5434b61bacfa3999b1f6",
         # llama.cpp b12017 Linux Ubuntu x64
-        "llama-b12017-bin-ubuntu-vulkan-x64.tar.gz": "a4f89d351a603e91a9e3e944c4d12f5b4af6acbd44c5434b61bacfa3999b1e02",
-        "llama-b12017-bin-ubuntu-x64.tar.gz": "b3e944c4c4c4ccf5b4af6acbd44c5434b61bacfa3999b1f6e89d351a603e91a9",
+        "llama-b12017-bin-ubuntu-vulkan-x64.tar.gz": "e940a901831c2e157b6329b8738f6edd6b036889c07e4e39d4fc818831220f61",
+        "llama-b12017-bin-ubuntu-x64.tar.gz": "16fe348b1bc2e943bc4c220938ce46af789e88291138bca5bd68c0cc017769a5",
         # llama.cpp b12017 macOS ARM64 Metal
-        "llama-b12017-bin-macos-arm64.zip": "f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2",
+        "llama-b12017-bin-macos-arm64.tar.gz": "4cfa51501cc3c602b404f43682e713405b4b946847876c5081d0a3f93ff26914",
     }
 
     @classmethod
@@ -64,14 +65,14 @@ class GestorBinariosLlama:
             if soporta_vulkan:
                 nombre_archivo = f"llama-{tag}-bin-win-vulkan-x64.zip"
             else:
-                nombre_archivo = f"llama-{tag}-bin-win-avx2-x64.zip"
+                nombre_archivo = f"llama-{tag}-bin-win-cpu-x64.zip"
         elif sistema == "Linux":
             if soporta_vulkan:
                 nombre_archivo = f"llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz"
             else:
                 nombre_archivo = f"llama-{tag}-bin-ubuntu-x64.tar.gz"
         elif sistema == "Darwin":
-            nombre_archivo = f"llama-{tag}-bin-macos-arm64.zip"
+            nombre_archivo = f"llama-{tag}-bin-macos-arm64.tar.gz"
         else:
             raise NotImplementedError(f"Sistema operativo no soportado para descarga automática: {sistema}")
 

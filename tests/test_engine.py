@@ -228,5 +228,60 @@ class TestClienteLlamaOffline(unittest.TestCase):
             self.assertEqual(vec, [0.11, 0.22, 0.33])
 
 
+class TestOptimizacionesSeguras(unittest.TestCase):
+    AYUDA = "--cache-reuse N   min chunk\n-tb, --threads-batch N   hilos batch\n"
+
+    @patch("guarida_manager.engine.server.obtener_ayuda_binario")
+    def test_activa_flags_anunciados_por_el_binario(self, mock_ayuda):
+        mock_ayuda.return_value = self.AYUDA
+        cfg = LlamaServerConfig(modelo_path=Path("m.gguf"), binario_path=Path("llama-server")).aplicar_optimizaciones_seguras(8)
+        self.assertEqual(cfg.cache_reuse, 256)
+        self.assertEqual(cfg.threads_batch, 8)
+        cmd = cfg.construir_comando()
+        self.assertIn("--cache-reuse", cmd)
+        self.assertIn("-tb", cmd)
+
+    @patch("guarida_manager.engine.server.obtener_ayuda_binario")
+    def test_no_activa_flags_si_binario_no_los_soporta(self, mock_ayuda):
+        mock_ayuda.return_value = "--port N\n"
+        cfg = LlamaServerConfig(modelo_path=Path("m.gguf"), binario_path=Path("llama-server")).aplicar_optimizaciones_seguras(8)
+        self.assertIsNone(cfg.cache_reuse)
+        self.assertIsNone(cfg.threads_batch)
+
+    @patch("guarida_manager.engine.server.obtener_ayuda_binario", return_value="")
+    def test_no_activa_nada_si_no_hay_ayuda(self, _):
+        cfg = LlamaServerConfig(modelo_path=Path("m.gguf")).aplicar_optimizaciones_seguras(8)
+        self.assertIsNone(cfg.cache_reuse)
+
+    @patch("guarida_manager.engine.server.obtener_ayuda_binario")
+    def test_embeddings_no_reciben_optimizaciones(self, mock_ayuda):
+        mock_ayuda.return_value = self.AYUDA
+        cfg = LlamaServerConfig(modelo_path=Path("e.gguf"), embedding=True).aplicar_optimizaciones_seguras(8)
+        self.assertIsNone(cfg.cache_reuse)
+
+
+class TestChecksumsBinarios(unittest.TestCase):
+    def test_todos_los_perfiles_tienen_checksum_real(self):
+        from guarida_manager.downloader.binaries import GestorBinariosLlama
+
+        for sistema in ("Windows", "Linux", "Darwin"):
+            for vulkan in (True, False):
+                with patch("platform.system", return_value=sistema), patch(
+                    "guarida_manager.downloader.binaries.detectar_soporte_vulkan", return_value=vulkan
+                ):
+                    if sistema == "Darwin" and vulkan:
+                        continue
+                    perfil = GestorBinariosLlama.resolver_perfil_sistema()
+                    self.assertIn(perfil.nombre_archivo, GestorBinariosLlama.CHECKSUMS_CONOCIDOS)
+                    self.assertNotIn("avx2", perfil.nombre_archivo)
+                    self.assertRegex(perfil.sha256_esperado, r"^[0-9a-f]{64}$")
+
+    def test_no_hay_checksums_duplicados(self):
+        from guarida_manager.downloader.binaries import GestorBinariosLlama
+
+        valores = list(GestorBinariosLlama.CHECKSUMS_CONOCIDOS.values())
+        self.assertEqual(len(valores), len(set(valores)))
+
+
 if __name__ == "__main__":
     unittest.main()

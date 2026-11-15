@@ -36,13 +36,58 @@ logger = obtener_logger("proyectos")
 DIRECTORIOS_IGNORADOS = {
     ".git", ".svn", ".hg", "__pycache__", ".pytest_cache", ".venv", "venv",
     "env", "node_modules", "dist", "build", ".idea", ".vscode", ".antigravity",
-    "brain", "logs", "binarios"
+    "brain", "logs", "binarios", ".ssh", ".gnupg", ".aws", ".azure", ".kube",
+}
+
+EXTENSIONES_CODIGO_GENERICO = {
+    ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java", ".js", ".ts", ".tsx", ".jsx",
+    ".cs", ".kt", ".swift", ".php", ".rb", ".sh", ".ps1", ".lua",
 }
 
 EXTENSIONES_SOPORTADAS = {
-    ".py", ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini",
-    ".cfg", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java", ".js", ".ts",
+    ".py", ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+} | EXTENSIONES_CODIGO_GENERICO
+
+# Archivos que pueden contener secretos: nunca se indexan (evita que acaben en un prompt).
+NOMBRES_SENSIBLES = {
+    ".env", ".netrc", ".npmrc", ".pypirc", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+    "credentials", "credentials.json", "secrets.json", "secrets.yaml", "secrets.yml",
+    "guarida.db",
 }
+SUFIJOS_SENSIBLES = (".pem", ".key", ".p12", ".pfx", ".jks", ".kdbx", ".db", ".sqlite", ".sqlite3", ".gguf", ".safetensors")
+PREFIJOS_SENSIBLES = (".env.",)
+TAMANO_MAX_ARCHIVO_BYTES = 1_000_000
+RRF_K = 60
+# Los modelos de embeddings no causales exigen que el texto quepa en un solo ubatch (~512 tokens).
+LIMITE_CHARS_EMBEDDING = 1800
+
+_RE_DEFINICION_GENERICA = re.compile(
+    r"^\s*(?:export\s+)?(?:async\s+)?(?:public\s+|private\s+|protected\s+|static\s+|pub(?:\([a-z]+\))?\s+)*"
+    r"(?:(?:function|class|interface|struct|enum|impl|trait|fn|func|def|type)\b|const\s+\w+\s*=\s*(?:async\s*)?\()",
+)
+
+
+def _estimar_tokens(texto: str) -> int:
+    return max(1, len(texto) // 4)
+
+
+def es_archivo_sensible(ruta: Path) -> bool:
+    """True si el nombre del archivo sugiere credenciales, claves o binarios que no deben indexarse."""
+    nombre = ruta.name.lower()
+    return (
+        nombre in NOMBRES_SENSIBLES
+        or nombre.endswith(SUFIJOS_SENSIBLES)
+        or nombre.startswith(PREFIJOS_SENSIBLES)
+    )
+
+
+def ruta_dentro_de_base(ruta: Path, base: Path) -> bool:
+    """True si `ruta` (resuelta, sin seguir fuera de la base) permanece dentro del directorio `base`."""
+    try:
+        ruta.resolve().relative_to(base.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
 
 
 @dataclass
@@ -70,10 +115,10 @@ class ChunkDocumento:
 def fragmentar_documento_texto(
     ruta_archivo: str,
     contenido: str,
-    max_lineas_chunk: int = 40,
+    max_tokens_chunk: int = 256,
     solapamiento: int = 5,
 ) -> list[ChunkDocumento]:
-    """Divide un archivo de texto o markdown en bloques lógicos respetando encabezados."""
+    """Divide un archivo de texto o markdown en bloques de ~`max_tokens_chunk` tokens respetando encabezados."""
     lineas = contenido.splitlines()
     if not lineas:
         return []
@@ -108,7 +153,7 @@ def fragmentar_documento_texto(
 
         bloque_actual.append(linea)
 
-        if len(bloque_actual) >= max_lineas_chunk:
+        if len(bloque_actual) > solapamiento and _estimar_tokens("\n".join(bloque_actual)) >= max_tokens_chunk:
             txt = "\n".join(bloque_actual).strip()
             if txt:
                 simbolos = set(re.findall(r"[a-zA-Z0-9_]{3,}", txt.lower()))
@@ -143,6 +188,53 @@ def fragmentar_documento_texto(
                 )
             )
 
+    return chunks
+
+
+def fragmentar_codigo_generico(
+    ruta_archivo: str,
+    contenido: str,
+    max_tokens_chunk: int = 320,
+) -> list[ChunkDocumento]:
+    """Fragmenta código no Python en bloques que empiezan en cada definición (function/class/fn/func/...)."""
+    lineas = contenido.splitlines()
+    if not lineas:
+        return []
+
+    chunks: list[ChunkDocumento] = []
+    inicio = 1
+    nombre = "cabecera"
+    bloque: list[str] = []
+
+    def _volcar(fin: int) -> None:
+        txt = "\n".join(bloque).strip()
+        if txt:
+            chunks.append(
+                ChunkDocumento(
+                    id_chunk=f"{ruta_archivo}:{inicio}",
+                    ruta_archivo=ruta_archivo,
+                    seccion=nombre,
+                    linea_inicio=inicio,
+                    linea_fin=fin,
+                    texto=txt,
+                    simbolos=set(re.findall(r"[a-zA-Z0-9_]{3,}", txt.lower())),
+                )
+            )
+
+    for idx, linea in enumerate(lineas, start=1):
+        es_def = bool(_RE_DEFINICION_GENERICA.match(linea)) and not linea.startswith((" ", "\t", "}"))
+        desborda = bloque and _estimar_tokens("\n".join(bloque)) >= max_tokens_chunk
+        if bloque and (es_def or desborda):
+            _volcar(idx - 1)
+            bloque = []
+            inicio = idx
+            if es_def:
+                nombre = linea.strip()[:80]
+        elif es_def and not bloque:
+            nombre = linea.strip()[:80]
+        bloque.append(linea)
+
+    _volcar(len(lineas))
     return chunks
 
 
@@ -194,8 +286,13 @@ class GestorProyectos:
         funcion_embedding: Optional[Callable[[str], list[float]]] = None,
         extensiones: Optional[set[str]] = None,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
+        modelo_emb_id: str = "",
     ) -> dict[str, Any]:
-        """Escanea recursivamente los archivos del proyecto, extrae nodos AST y fragmentos y los indexa."""
+        """Escanea el proyecto, extrae nodos AST/fragmentos y los indexa de forma incremental.
+
+        Los embeddings se persisten en SQLite (clave = modelo + SHA-256 del texto), de modo que una
+        reindexación solo vectoriza los nodos/fragmentos nuevos o modificados.
+        """
         proy = self.obtener_proyecto(proyecto_id)
         if not proy:
             raise ValueError(f"Proyecto '{proyecto_id}' no encontrado.")
@@ -206,24 +303,50 @@ class GestorProyectos:
 
         exts = extensiones or EXTENSIONES_SOPORTADAS
         archivos_candidatos: list[Path] = []
+        omitidos_seguridad = 0
 
-        for root, dirs, files in os.walk(ruta_base):
-            dirs[:] = [d for d in dirs if d not in DIRECTORIOS_IGNORADOS and not d.startswith(".")]
+        for root, dirs, files in os.walk(ruta_base, followlinks=False):
+            dirs[:] = [
+                d for d in dirs
+                if d not in DIRECTORIOS_IGNORADOS
+                and not d.startswith(".")
+                and not (Path(root) / d).is_symlink()
+            ]
             for f in files:
                 p = Path(root) / f
-                if p.suffix.lower() in exts:
-                    archivos_candidatos.append(p)
+                try:
+                    if (
+                        es_archivo_sensible(p)
+                        or p.is_symlink()
+                        or not ruta_dentro_de_base(p, ruta_base)
+                    ):
+                        omitidos_seguridad += 1
+                        continue
+                    if p.suffix.lower() not in exts:
+                        continue
+                    if p.stat().st_size > TAMANO_MAX_ARCHIVO_BYTES:
+                        omitidos_seguridad += 1
+                        continue
+                except OSError:
+                    omitidos_seguridad += 1
+                    continue
+                archivos_candidatos.append(p)
 
         total_archivos = len(archivos_candidatos)
         if total_archivos == 0:
-            return {"total_archivos": 0, "nodos_ast": 0, "chunks_texto": 0, "archivos_procesados": 0}
+            return {
+                "total_archivos": 0, "nodos_ast": 0, "chunks_texto": 0, "archivos_procesados": 0,
+                "archivos_sin_cambios": 0, "omitidos_seguridad": omitidos_seguridad,
+            }
 
         arbol = ArbolNodosCodigo()
         chunks_docs: list[ChunkDocumento] = []
         nodos_ast_totales = 0
         chunks_totales = 0
         archivos_procesados = 0
+        archivos_sin_cambios = 0
 
+        hashes_previos = self.cache.obtener_documentos_hash(proyecto_id)
         self.cache.eliminar_documentos_proyecto(proyecto_id)
 
         for i, archivo in enumerate(archivos_candidatos, start=1):
@@ -238,11 +361,19 @@ class GestorProyectos:
                 continue
 
             sha256_archivo = hashlib.sha256(contenido.encode("utf-8")).hexdigest()
-            tipo_doc = "codigo_python" if archivo.suffix.lower() == ".py" else "documento_texto"
+            if hashes_previos.get(ruta_rel) == sha256_archivo:
+                archivos_sin_cambios += 1
+            sufijo = archivo.suffix.lower()
+            if sufijo == ".py":
+                tipo_doc = "codigo_python"
+            elif sufijo in EXTENSIONES_CODIGO_GENERICO:
+                tipo_doc = "codigo_generico"
+            else:
+                tipo_doc = "documento_texto"
             nodos_en_archivo = 0
             tokens_est = len(contenido) // 4
 
-            if archivo.suffix.lower() == ".py":
+            if sufijo == ".py":
                 try:
                     arbol.construir_desde_codigo_python(contenido, ruta_archivo=ruta_rel)
                     nodos_en_archivo = len([n for n in arbol.nodos.values() if n.ruta_archivo == ruta_rel])
@@ -250,7 +381,10 @@ class GestorProyectos:
                 except Exception as e_ast:
                     logger.debug(f"Fallo al parsear AST para {ruta_rel}: {e_ast}")
             else:
-                chunks_arch = fragmentar_documento_texto(ruta_rel, contenido)
+                if tipo_doc == "codigo_generico":
+                    chunks_arch = fragmentar_codigo_generico(ruta_rel, contenido)
+                else:
+                    chunks_arch = fragmentar_documento_texto(ruta_rel, contenido)
                 chunks_docs.extend(chunks_arch)
                 chunks_totales += len(chunks_arch)
                 nodos_en_archivo = len(chunks_arch)
@@ -269,24 +403,38 @@ class GestorProyectos:
             self.cache.guardar_documento_proyecto(doc_reg)
             archivos_procesados += 1
 
-        # Vectorización con embeddings si se provee la función
+        # Vectorización incremental: caché persistente en SQLite por (modelo + SHA-256 del texto)
         embeddings_calculados = 0
+        embeddings_reutilizados = 0
+        errores_embedding = 0
         if funcion_embedding:
             if callback_progreso:
-                callback_progreso("Calculando embeddings vectoriales de nodos AST...", 90.0)
-            embeddings_ast = arbol.indexar_embeddings(funcion_embedding, usar_cache=True)
-            embeddings_calculados += embeddings_ast
+                callback_progreso("Vectorizando nodos AST y fragmentos (incremental)...", 90.0)
 
-            # Embeddings para chunks de texto
+            def _vectorizar(txt: str) -> list[float]:
+                nonlocal embeddings_calculados, embeddings_reutilizados
+                clave = hashlib.sha256(f"{modelo_emb_id}\x00{txt}".encode("utf-8")).hexdigest()
+                previo = self.cache.obtener_embedding(clave)
+                if previo:
+                    embeddings_reutilizados += 1
+                    return previo
+                vec = funcion_embedding(txt[:LIMITE_CHARS_EMBEDDING])
+                if vec:
+                    self.cache.guardar_embedding(clave, modelo_emb_id or "desconocido", vec)
+                    embeddings_calculados += 1
+                return vec
+
+            arbol.indexar_embeddings(_vectorizar, usar_cache=False)
+            errores_embedding += sum(1 for n in arbol.nodos.values() if not n.embedding)
+
             for ch in chunks_docs:
-                txt = ch.texto_para_vectorizacion()
                 try:
-                    vec = funcion_embedding(txt)
+                    vec = _vectorizar(ch.texto_para_vectorizacion())
                     if vec:
                         ch.embedding = vec
-                        embeddings_calculados += 1
-                except Exception:
-                    pass
+                except Exception as e_emb:
+                    errores_embedding += 1
+                    logger.warning(f"Fallo de embedding en {ch.id_chunk}: {e_emb}")
 
         self._arboles_codigo[proyecto_id] = arbol
         self._chunks_texto[proyecto_id] = chunks_docs
@@ -294,9 +442,13 @@ class GestorProyectos:
         resumen = {
             "total_archivos": total_archivos,
             "archivos_procesados": archivos_procesados,
+            "archivos_sin_cambios": archivos_sin_cambios,
+            "omitidos_seguridad": omitidos_seguridad,
             "nodos_ast": nodos_ast_totales,
             "chunks_texto": chunks_totales,
             "embeddings_calculados": embeddings_calculados,
+            "embeddings_reutilizados": embeddings_reutilizados,
+            "errores_embedding": errores_embedding,
         }
         logger.info(f"Indexación completada para proyecto '{proyecto_id}': {resumen}")
         return resumen
@@ -309,45 +461,72 @@ class GestorProyectos:
         top_k: int = 5,
         funcion_embedding: Optional[Callable[[str], list[float]]] = None,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Realiza búsqueda híbrida RRF combinando Nodos AST de código y Chunks de documentación."""
+        """Búsqueda híbrida con Reciprocal Rank Fusion real (ranking denso + ranking léxico) sobre AST y documentos.
+
+        Funciona también sin embeddings (solo ranking léxico) cuando el servidor vectorial no está disponible.
+        """
         arbol = self._arboles_codigo.get(proyecto_id)
         chunks = self._chunks_texto.get(proyecto_id, [])
 
         if vector_consulta is None and funcion_embedding is not None:
             try:
-                vector_consulta = funcion_embedding(consulta)
-            except Exception:
+                vector_consulta = funcion_embedding(consulta[:LIMITE_CHARS_EMBEDDING])
+            except Exception as e_q:
+                logger.warning(f"No se pudo vectorizar la consulta; se usa solo ranking léxico: {e_q}")
                 vector_consulta = None
 
         fuentes: list[dict[str, Any]] = []
-        candidatos_ast: list[tuple[NodoAST, float]] = []
-
-        if arbol and vector_consulta:
-            candidatos_ast = arbol.buscar_nodos_relevantes(
-                vector_consulta=vector_consulta,
-                top_k=top_k,
-                consulta_texto=consulta,
-            )
-
-        candidatos_chunks: list[tuple[ChunkDocumento, float]] = []
         tokens_q = set(re.findall(r"[a-zA-Z0-9_]{3,}", consulta.lower()))
+        consulta_min = consulta.lower()
 
+        # Elementos unificados: (objeto, simbolos léxicos, embedding)
+        elementos: list[tuple[Any, set[str], Optional[list[float]]]] = []
+        if arbol:
+            for nodo in arbol.nodos.values():
+                if nodo.tipo == TipoNodoAST.MODULO:
+                    continue
+                lex = set(nodo.simbolos) | set(nodo.nombre.lower().split("_"))
+                if nodo.nombre.lower() in consulta_min:
+                    lex.add("__nombre_exacto__")
+                elementos.append((nodo, lex, nodo.embedding))
         for ch in chunks:
-            sim = 0.0
-            if vector_consulta and ch.embedding:
-                sim = similitud_coseno(vector_consulta, ch.embedding)
-            # Boost léxico
-            boost_lexico = 0.0
-            if tokens_q and ch.simbolos:
-                solap = len(tokens_q & ch.simbolos)
-                if solap > 0:
-                    boost_lexico = min(0.30, 0.08 * solap)
-            score = min(1.0, sim + boost_lexico)
-            if score > 0.15:
-                candidatos_chunks.append((ch, round(score, 4)))
+            elementos.append((ch, ch.simbolos, ch.embedding))
 
-        candidatos_chunks.sort(key=lambda x: x[1], reverse=True)
-        candidatos_chunks = candidatos_chunks[:top_k]
+        ranking_denso: list[int] = []
+        if vector_consulta:
+            sims = [
+                (i, similitud_coseno(vector_consulta, emb))
+                for i, (_, _, emb) in enumerate(elementos)
+                if emb
+            ]
+            ranking_denso = [i for i, s in sorted(sims, key=lambda x: x[1], reverse=True) if s > 0.0]
+
+        lexicos: list[tuple[int, float]] = []
+        for i, (_, lex, _) in enumerate(elementos):
+            puntos = float(len(tokens_q & lex))
+            if "__nombre_exacto__" in lex:
+                puntos += 3.0
+            if puntos > 0:
+                lexicos.append((i, puntos))
+        ranking_lexico = [i for i, _ in sorted(lexicos, key=lambda x: x[1], reverse=True)]
+
+        puntuacion_rrf: dict[int, float] = {}
+        for ranking in (ranking_denso, ranking_lexico):
+            for pos, idx in enumerate(ranking, start=1):
+                puntuacion_rrf[idx] = puntuacion_rrf.get(idx, 0.0) + 1.0 / (RRF_K + pos)
+
+        maximo_teorico = 2.0 / (RRF_K + 1)
+        mejores = sorted(puntuacion_rrf.items(), key=lambda x: x[1], reverse=True)[:top_k]
+
+        candidatos_ast: list[tuple[NodoAST, float]] = []
+        candidatos_chunks: list[tuple[ChunkDocumento, float]] = []
+        for idx, punt in mejores:
+            relevancia = round(min(1.0, punt / maximo_teorico), 4)
+            obj = elementos[idx][0]
+            if isinstance(obj, NodoAST):
+                candidatos_ast.append((obj, relevancia))
+            else:
+                candidatos_chunks.append((obj, relevancia))
 
         bloques_contexto: list[str] = []
 

@@ -92,6 +92,69 @@ class ClienteTensoresChat:
         self.motor.liberar_memoria()
 
 
+def iniciar_servidor_embeddings(
+    cache: GestorCache,
+    motor_emb_id: Optional[str],
+    print_func: Callable[..., Any] = print,
+) -> tuple[Optional[GestorLlamaServer], Optional[ClienteLlamaOffline]]:
+    """Levanta `llama-server --embedding` (CPU, modo cooperativo, puerto libre, api_key aleatoria).
+
+    Devuelve (gestor, cliente) o (None, None) avisando explícitamente si no es posible.
+    """
+    if not motor_emb_id:
+        print_func("[!] No hay motor de embeddings asignado: la búsqueda del repositorio será solo léxica.")
+        return None, None
+
+    locales = {m["id"]: m for m in menu_actions.obtener_modelos_locales(cache)}
+    mod = locales.get(motor_emb_id)
+    if not mod:
+        print_func(f"[!] El motor de embeddings '{motor_emb_id}' no está descargado: búsqueda solo léxica.")
+        return None, None
+
+    binario = GestorHerramientasBunker.resolver_ruta_ejecutable("llama-server")
+    if not binario:
+        print_func("[!] No se encontró 'llama-server': búsqueda solo léxica.")
+        return None, None
+
+    from guarida_manager.tuning.ejecutor import encontrar_puerto_libre
+
+    info_hw = obtener_informacion_hardware()
+    puerto = encontrar_puerto_libre("127.0.0.1")
+    clave = secrets.token_urlsafe(32)
+    cfg = LlamaServerConfig(
+        modelo_path=Path(mod["ruta_local"]),
+        binario_path=binario,
+        host="127.0.0.1",
+        port=puerto,
+        n_gpu_layers=0,
+        ctx_size=2048,
+        batch_size=512,
+        ubatch_size=512,
+        threads=max(1, (info_hw.nucleos_fisicos or 4) // 2),
+        embedding=True,
+        api_key=clave,
+        alias=motor_emb_id,
+    )
+    gestor = GestorLlamaServer(gestor_cache=cache)
+    cliente = ClienteLlamaOffline(host="127.0.0.1", port=puerto, api_key=clave)
+    try:
+        gestor.iniciar_servidor(cfg, ruta_log=DIRECTORIO_LOGS / "llama-embeddings.log")
+        for _ in range(60):
+            if cliente.esta_disponible():
+                return gestor, cliente
+            if gestor.proceso and gestor.proceso.poll() is not None:
+                break
+            time.sleep(0.5)
+    except Exception as e_emb:
+        logger.error(f"Fallo al iniciar servidor de embeddings '{motor_emb_id}': {e_emb}", exc_info=True)
+    try:
+        gestor.detener_servidor()
+    except Exception:
+        pass
+    print_func(f"[!] No se pudo iniciar el servidor de embeddings '{motor_emb_id}': búsqueda solo léxica.")
+    return None, None
+
+
 def clasificar_tok_s_chat(tok_s: float) -> str:
     """Clasifica la fluidez para chat según las directrices CanIRun/LLMFit."""
     if tok_s >= 35.0:
@@ -126,7 +189,7 @@ def estimar_tok_s_modelo(
     # 2. Catálogo oficial
     m_def = CatalogoModelos.obtener_modelo(modelo_id)
     if m_def:
-        ev = ComparadorModelosHardware.evaluar_modelo(m_def, hw, cache)
+        ev = ComparadorModelosHardware.evaluar_modelo_completo(m_def.id, m_def.tamano_gb, hw, cache)
         return ev.tok_s_estimado, ev.clasificacion_chat, False
 
     # 3. Estimación analítica por tamaño de fichero
@@ -149,7 +212,7 @@ def estimar_tok_s_modelo(
         repo_hf="local/custom",
         filename=Path(ruta_local).name if ruta_local else f"{modelo_id}.gguf",
     )
-    ev = ComparadorModelosHardware.evaluar_modelo(m_temp, hw, cache)
+    ev = ComparadorModelosHardware.evaluar_modelo_completo(m_temp.id, m_temp.tamano_gb, hw, cache)
     return ev.tok_s_estimado, ev.clasificacion_chat, False
 
 
@@ -693,6 +756,35 @@ def ejecutar_chat_terminal(
     total_tokens_generados = 0
     tiempo_total_inferencia = 0.0
 
+    # Indexación incremental del proyecto (embeddings reutilizados desde SQLite)
+    gestor_emb: Optional[GestorLlamaServer] = None
+    fn_emb: Optional[Callable[[str], list[float]]] = None
+    if proy_activo:
+        gestor_emb, cli_emb = iniciar_servidor_embeddings(cache, motor_emb_id, print_func)
+        if cli_emb is not None:
+            fn_emb = cli_emb.calcular_embedding
+        try:
+            print_func(f"\nIndexando proyecto '{proy_activo['nombre']}'...")
+            res_idx = gestor_proy.escanear_e_indexar_proyecto(
+                proy_activo["id"],
+                funcion_embedding=fn_emb,
+                modelo_emb_id=motor_emb_id or "",
+            )
+            print_func(
+                f"  Archivos: {res_idx['archivos_procesados']} ({res_idx['archivos_sin_cambios']} sin cambios) | "
+                f"Nodos AST: {res_idx['nodos_ast']} | Fragmentos: {res_idx['chunks_texto']} | "
+                f"Embeddings nuevos/reutilizados: {res_idx.get('embeddings_calculados', 0)}/"
+                f"{res_idx.get('embeddings_reutilizados', 0)} | "
+                f"Omitidos por seguridad: {res_idx['omitidos_seguridad']}"
+            )
+            if res_idx.get("errores_embedding"):
+                print_func(
+                    f"  [!] {res_idx['errores_embedding']} elementos sin vector: se usará ranking léxico para ellos."
+                )
+        except Exception as e_idx:
+            logger.error(f"Fallo al indexar proyecto: {e_idx}", exc_info=True)
+            print_func(f"[!] No se pudo indexar el proyecto: {e_idx}")
+
     try:
         while True:
             try:
@@ -714,30 +806,30 @@ def ejecutar_chat_terminal(
             prompt_usuario_final = msg
             if proy_activo:
                 try:
-                    def _fn_emb(txt: str) -> list[float]:
-                        return cli.obtener_embeddings(txt) if hasattr(cli, "obtener_embeddings") else []
-
                     ctx_doc, fuentes_turno = gestor_proy.buscar_contexto_hibrido(
                         proyecto_id=proy_activo["id"],
                         consulta=msg,
                         top_k=3,
-                        funcion_embedding=_fn_emb if motor_emb_id else None,
+                        funcion_embedding=fn_emb,
                     )
                     if ctx_doc:
                         prompt_usuario_final = (
                             f"{msg}\n\n[Contexto del Repositorio/Documentación]:\n{ctx_doc}"
                         )
                 except Exception as e_rag:
-                    logger.debug(f"Fallo al recuperar contexto RAG: {e_rag}")
+                    logger.warning(f"Fallo al recuperar contexto RAG: {e_rag}", exc_info=True)
+                    print_func(f"[!] No se pudo recuperar contexto del repositorio: {e_rag}")
 
-            # Medición de tokens del mensaje escrito por el usuario
-            tokens_msg = medir_tokens_mensaje(cli, prompt_usuario_final)
-            historial.append({"role": "user", "content": prompt_usuario_final})
+            # Medición de tokens del mensaje escrito por el usuario (sin el contexto recuperado)
+            tokens_msg = medir_tokens_mensaje(cli, msg)
+            # El contexto RAG solo viaja en este turno: el historial conserva el mensaje limpio
+            # para que las citas anteriores no inflen la ventana de contexto en turnos sucesivos.
+            mensajes_envio = historial + [{"role": "user", "content": prompt_usuario_final}]
 
             t_inicio = time.perf_counter()
             try:
                 resp = cli.completar_chat(
-                    mensajes=historial,
+                    mensajes=mensajes_envio,
                     temperatura=0.2,
                     max_tokens=1024,
                 )
@@ -757,6 +849,7 @@ def ejecutar_chat_terminal(
                         rel = f.get("relevancia", 0.0)
                         print_func(f"   * {orig}:{lineas} ({nom}) - Score: {rel:.2f}")
 
+                historial.append({"role": "user", "content": msg})
                 historial.append({"role": "assistant", "content": contenido_asistente})
 
                 # Cálculo y presentación de mediciones de tokens y velocidad
@@ -798,6 +891,11 @@ def ejecutar_chat_terminal(
                 print_func(f"\n[!] Error durante la inferencia del modelo: {err}")
 
     finally:
+        if gestor_emb is not None:
+            try:
+                gestor_emb.detener_servidor()
+            except Exception:
+                pass
         if hasattr(cli, "liberar_memoria"):
             try:
                 cli.liberar_memoria()

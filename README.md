@@ -75,7 +75,7 @@ Conclusiones de la comparativa:
 
 - [x] **Fase 1: Base de hardware, diagnóstico y aprovisionamiento offline** (detección GPU/GTT, caché SQLite, herramientas del búnker y perfiles afinados).
 - [x] **Fase 2: Motor de inferencia local, Punto Dulce y Árbol de Nodos AST** (levantamiento autónomo de `llama-server` con perfiles óptimos de SQLite, afinador empírico por etapas, indexación AST + compresión BPE + búsqueda híbrida RRF y comparativa cara a cara `Qwen2.5` vs `Qwen3`).
-- [ ] **Fase 3: Arnés de agentes y roles** (orquestación autónoma en bucles iterativos y aplicación de parches en worktrees de Git).
+- [ ] **Fase 3: Arnés de agentes y roles** (en curso). Hecho: proyectos, indexación incremental de repositorios/documentos, RAG local con citas y sesiones de chat persistentes (menú `[7]`). Pendiente: orquestación autónoma en bucles iterativos, permisos por rol y aplicación de parches en worktrees de Git.
 - [ ] **Fase 4: Aislamiento del sistema** (sandboxing de herramientas a nivel de sistema operativo).
 
 ## Instalación y Uso (Entorno de desarrollo)
@@ -181,7 +181,16 @@ Sistema automatizado para encontrar el **Punto Dulce** de cualquier modelo sobre
   python -m guarida_manager.tuning --modelo qwen2.5-coder-7b-q4 --perfil rapido --objetivo coder_ast
   ```
 
-### 10. Decisiones de Arquitectura (ADRs)
+### 10. Proyectos y chat con tu repositorio (RAG 100% local)
+Menú principal → `[7] Proyectos y Documentos`:
+- **Proyectos:** registra una carpeta (código y/o documentación). Se indexa al abrir el chat: Python por árbol AST; Markdown/texto por fragmentos de ~256 tokens; JS/TS/Go/Rust/Java/C/C++ por definiciones.
+- **Indexación incremental:** los embeddings se guardan en `guarida.db` (clave = modelo + SHA-256 del texto); reindexar solo vectoriza lo nuevo o modificado.
+- **Búsqueda:** Reciprocal Rank Fusion (coseno + coincidencia léxica de identificadores). Sin servidor de embeddings degrada a ranking léxico, avisando.
+- **Citas:** cada respuesta lista `archivo:líneas` de las fuentes usadas. El contexto recuperado solo viaja en el turno actual para no inflar la ventana.
+- **Sesiones:** los chats se guardan por proyecto y se pueden reanudar.
+- **Seguridad:** no se indexan `.env*`, claves (`*.pem`, `*.key`, `id_rsa*`), `*.db`, modelos, enlaces simbólicos, rutas fuera del proyecto ni archivos > 1 MB.
+
+### 11. Decisiones de Arquitectura (ADRs)
 - [ADR 0001: Arquitectura Base y Gestor de Inferencia Local](docs/adr/0001-arquitectura-base-fase-1.md)
 - [ADR 0002: Verificación Empírica y Prueba de Estrés de Memoria GPU/GTT](docs/adr/0002-verificacion-empirica-memoria-gpu.md)
 - [ADR 0003: Aprovisionamiento Único Offline, Gobernanza Regional y Seguridad Postcuántica](docs/adr/0003-aprovisionamiento-offline-gobernanza-postcuantica.md)
@@ -192,6 +201,7 @@ Sistema automatizado para encontrar el **Punto Dulce** de cualquier modelo sobre
 - [ADR 0008: Adopción Selectiva de Capacidades Maya (Inspección GGUF, Caché y Telemetría)](docs/adr/0008-adopcion-capacidades-maya-inspeccion-gguf-cache-y-telemetria.md)
 - [ADR 0009: Árbol de Nodos AST, Compresión BPE, Búsqueda Híbrida RRF y Comparativa Cara a Cara](docs/adr/0009-arbol-nodos-ast-compresion-bpe-y-comparativa-modelos.md)
 - [ADR 0010: Optimizaciones Avanzadas de Inferencia, Subsistema de Proyectos y RAG de Repositorio Local](docs/adr/0010-optimizaciones-motor-proyectos-y-rag-repositorio.md)
+- [ADR 0011: Correcciones de Auditoría del RAG de Proyectos (Fase 3)](docs/adr/0011-correcciones-auditoria-rag-proyectos.md)
 
 ## Licencia
 

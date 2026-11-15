@@ -336,6 +336,17 @@ class GestorCache:
                 );
                 """
             )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS embeddings_cache (
+                    clave TEXT PRIMARY KEY,
+                    modelo_emb_id TEXT NOT NULL,
+                    dimensiones INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    fecha TEXT NOT NULL
+                );
+                """
+            )
 
     def guardar_modelo(self, modelo: ModeloRegistro) -> None:
         with self.sesion() as conexion:
@@ -716,6 +727,51 @@ class GestorCache:
     def eliminar_documentos_proyecto(self, proyecto_id: str) -> None:
         with self.sesion() as conexion:
             conexion.execute("DELETE FROM documentos_proyecto WHERE proyecto_id = ?;", (proyecto_id,))
+
+    # --- Caché persistente de embeddings (indexación incremental) ---
+
+    def guardar_embedding(self, clave: str, modelo_emb_id: str, vector: list[float]) -> None:
+        import array
+
+        datos = array.array("f", vector).tobytes()
+        with self.sesion() as conexion:
+            conexion.execute(
+                """
+                INSERT INTO embeddings_cache (clave, modelo_emb_id, dimensiones, vector, fecha)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(clave) DO UPDATE SET
+                    vector = excluded.vector,
+                    dimensiones = excluded.dimensiones,
+                    fecha = excluded.fecha;
+                """,
+                (clave, modelo_emb_id, len(vector), datos, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def obtener_embedding(self, clave: str) -> Optional[list[float]]:
+        import array
+
+        with self.sesion() as conexion:
+            fila = conexion.execute(
+                "SELECT dimensiones, vector FROM embeddings_cache WHERE clave = ?;", (clave,)
+            ).fetchone()
+        if not fila:
+            return None
+        arr = array.array("f")
+        arr.frombytes(fila["vector"])
+        if len(arr) != fila["dimensiones"]:
+            return None
+        return arr.tolist()
+
+    def limpiar_embeddings_modelo(self, modelo_emb_id: str) -> int:
+        with self.sesion() as conexion:
+            cur = conexion.execute(
+                "DELETE FROM embeddings_cache WHERE modelo_emb_id = ?;", (modelo_emb_id,)
+            )
+            return cur.rowcount
+
+    def obtener_documentos_hash(self, proyecto_id: str) -> dict[str, str]:
+        """Mapa ruta_relativa -> sha256 de los documentos indexados previamente."""
+        return {d["ruta_relativa"]: d["sha256"] for d in self.listar_documentos_proyecto(proyecto_id)}
 
     # --- Métodos para Sesiones y Mensajes de Chat ---
 

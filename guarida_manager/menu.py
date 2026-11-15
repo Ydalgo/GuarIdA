@@ -1257,6 +1257,20 @@ def opcion_asistente_configuracion_llm(gestor_cache: Optional[GestorCache] = Non
     ejecutar_chat_terminal(cache, gestor_server=srv, cliente=cli)
 
 
+def opcion_proyectos_y_documentos(gestor_cache: Optional[GestorCache] = None) -> None:
+    from guarida_manager.menu_proyectos import opcion_proyectos
+
+    cache = gestor_cache or GestorCache()
+    srv = obtener_gestor_servidor(cache)
+    cli = obtener_cliente_llama()
+    opcion_proyectos(
+        cache,
+        lanzar_chat=lambda pid, sid: ejecutar_chat_terminal(
+            cache, gestor_server=srv, cliente=cli, proyecto_id=pid, sesion_id=sid
+        ),
+    )
+
+
 def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
     cache = gestor_cache or GestorCache()
     inicializar_logging()
@@ -1297,11 +1311,12 @@ def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
         print("  [4] Servidor Local e Inferencia (Arrancar / Chat / Estado)")
         print("  [5] Diagnóstico del Sistema (Hardware, Caché, Tests y Logs)")
         print("  [6] Chat por Terminal con Modelo (Parejas Recomendadas / Métricas)")
+        print("  [7] Proyectos y Documentos (Chat con tu repositorio, sesiones)")
         print("  [0] Salir")
         print("-" * 75)
         
         try:
-            opcion = input("Selecciona una opción [A, 1-6, 0]: ").strip()
+            opcion = input("Selecciona una opción [A, 1-7, 0]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n\nSaliendo de GuarIdA...")
             sys.exit(0)
@@ -1313,7 +1328,7 @@ def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
                 opcion_catalogo_y_bunker(cache)
             elif opcion == "2":
                 ejecutar_comparativa_ast_directa(cache)
-            elif opcion in ("3", "7"):
+            elif opcion == "3":
                 opcion_afinador_y_benchmark(cache)
             elif opcion in ("4",):
                 opcion_motor_inferencia(cache)
@@ -1322,6 +1337,8 @@ def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
             elif opcion in ("6", "c", "C") or opcion.lower() == "chat":
                 opcion_asistente_configuracion_llm(cache)
                 input("\nPresiona [Enter] para volver al menú...")
+            elif opcion == "7":
+                opcion_proyectos_y_documentos(cache)
             elif opcion == "8":
                 opcion_logs_sistema()
                 input("Presiona [Enter] para volver al menú...")

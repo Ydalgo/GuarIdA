@@ -1,6 +1,6 @@
 # ADR 0010: Optimizaciones Avanzadas de Inferencia, Subsistema de Proyectos y RAG de Repositorio Local
 
-* **Estado:** Aceptado e Implementado
+* **Estado:** Aceptado e Implementado (con errata: ver [ADR 0011](0011-correcciones-auditoria-rag-proyectos.md), que corrige el RAG del chat, la integración en menú y los checksums)
 * **Fecha:** 2026-11-15
 * **Contexto:** Transición Fase 2 -> Fase 3 (Optimizaciones de Motor, Indexación de Repositorio y Sesiones Persistentes)
 

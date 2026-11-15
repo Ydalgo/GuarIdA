@@ -39,6 +39,27 @@ FLAGS_PERMITIDOS_EXTRA_ARGS = {
 }
 
 _SERVIDORES_ACTIVOS: set["GestorLlamaServer"] = set()
+_CACHE_AYUDA_BINARIO: dict[str, str] = {}
+
+
+def obtener_ayuda_binario(binario: Optional[Path]) -> str:
+    """Devuelve la salida de `--help` del binario (cacheada por ruta y mtime). Cadena vacía si no es ejecutable."""
+    if not binario:
+        return ""
+    try:
+        if not Path(binario).is_file():
+            return ""
+        clave = f"{binario}:{Path(binario).stat().st_mtime_ns}"
+        if clave in _CACHE_AYUDA_BINARIO:
+            return _CACHE_AYUDA_BINARIO[clave]
+        proc = subprocess.run(
+            [str(binario), "--help"], capture_output=True, text=True, timeout=15, check=False
+        )
+        texto = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        _CACHE_AYUDA_BINARIO[clave] = texto
+        return texto
+    except Exception:
+        return ""
 
 
 def _limpiar_servidores_activos() -> None:
@@ -78,6 +99,27 @@ class LlamaServerConfig:
     mlock: bool = False
     no_mmap: bool = False
     extra_args: list[str] = field(default_factory=list)
+
+    def aplicar_optimizaciones_seguras(self, hilos_logicos: Optional[int] = None) -> "LlamaServerConfig":
+        """Activa optimizaciones de bajo riesgo solo si el binario las anuncia en `--help`.
+
+        - `--cache-reuse 256`: reutiliza fragmentos de KV entre turnos (prefijos estables).
+        - `-tb`: hilos dedicados al prefill (PP).
+        Las opciones de mayor riesgo (`-md`, `--lookup-cache`, `--ctx-shift`) quedan solo bajo petición explícita.
+        """
+        if self.embedding:
+            return self
+        binario = self.binario_path or GestorHerramientasBunker.resolver_ruta_ejecutable("llama-server")
+        ayuda = obtener_ayuda_binario(Path(binario) if binario else None)
+        if not ayuda:
+            return self
+        if self.cache_reuse is None and "--cache-reuse" in ayuda:
+            self.cache_reuse = 256
+        if self.threads_batch is None and isinstance(hilos_logicos, int) and hilos_logicos > 0 and (
+            "--threads-batch" in ayuda or "-tb," in ayuda or "-tb " in ayuda
+        ):
+            self.threads_batch = hilos_logicos
+        return self
 
     def construir_comando(self) -> list[str]:
         if self.host not in ("127.0.0.1", "localhost", "::1"):
@@ -228,7 +270,7 @@ class LlamaServerConfig:
                 ubatch_size=ubatch,
                 flash_attn=fa,
                 extra_args=extra,
-            )
+            ).aplicar_optimizaciones_seguras(getattr(info_hw, "nucleos_logicos", None))
 
         vram_util_gb = max(0.0, info_hw.gtt_disponible_gb - 1.5)
         extra_fallback: list[str] = []
@@ -263,7 +305,7 @@ class LlamaServerConfig:
             alias=modelo_id,
             api_key=api_key,
             extra_args=extra_fallback,
-        )
+        ).aplicar_optimizaciones_seguras(getattr(info_hw, "nucleos_logicos", None))
 
 
 class GestorLlamaServer:
