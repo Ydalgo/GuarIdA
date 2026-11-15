@@ -406,6 +406,12 @@ class GestorCache:
                 (estado, motivo_descarte, modelo_id),
             )
 
+    def eliminar_modelo(self, modelo_id: str) -> bool:
+        """Elimina el registro de un modelo de la base de datos."""
+        with self.sesion() as conexion:
+            cursor = conexion.execute("DELETE FROM modelos WHERE id = ?;", (modelo_id,))
+            return cursor.rowcount > 0
+
     def guardar_benchmark(self, benchmark: BenchmarkRegistro) -> int:
         with self.sesion() as conexion:
             cursor = conexion.execute(
