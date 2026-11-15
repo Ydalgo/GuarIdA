@@ -486,6 +486,8 @@ def calcular_metricas_interaccion(
     tiempo_total_s: float,
     cliente: Optional[ClienteLlamaOffline] = None,
     contenido_salida: str = "",
+    metricas_rag: Optional[dict[str, Any]] = None,
+    metricas_hw: Optional[Any] = None,
 ) -> dict[str, Any]:
     """Extrae y calcula las métricas de velocidad y uso de tokens de un turno conversacional."""
     usage = respuesta_api.get("usage", {})
@@ -509,6 +511,14 @@ def calcular_metricas_interaccion(
     vel_prompt_tok_s = timings.get("prompt_per_second")
     vel_pred_timings = timings.get("predicted_per_second")
 
+    hw = metricas_hw
+    if hw is None:
+        try:
+            from guarida_manager.telemetry import MonitorTelemetriaHardware
+            hw = MonitorTelemetriaHardware.capturar_metricas()
+        except Exception:
+            hw = None
+
     return {
         "tokens_mensaje": tokens_mensaje,
         "tokens_enviados_realmente": prompt_tokens,
@@ -520,6 +530,8 @@ def calcular_metricas_interaccion(
         "velocidad_prompt_tok_s": vel_prompt_tok_s,
         "prompt_ms": timings.get("prompt_ms"),
         "predicted_ms": timings.get("predicted_ms"),
+        "rag": metricas_rag,
+        "hardware": hw,
     }
 
 
@@ -538,6 +550,49 @@ def mostrar_metricas_turno(
     print_func(f"  * Velocidad de generación (TG):         {metricas['velocidad_generacion_tok_s']:.2f} tok/s")
     if metricas.get("velocidad_prompt_tok_s"):
         print_func(f"  * Velocidad procesamiento prompt (PP):  {metricas['velocidad_prompt_tok_s']:.2f} tok/s")
+
+    rag = metricas.get("rag")
+    if rag:
+        print_func("\n  [TRABAJO CON FICHEROS / RAG LOCAL]")
+        t_busq = rag.get("tiempo_busqueda_ms", 0.0)
+        n_eval = rag.get("fragmentos_evaluados", 0)
+        eval_str = f" ({n_eval} fragmentos evaluados)" if n_eval else ""
+        print_func(f"  * Búsqueda de referencias:              {t_busq:.1f} ms{eval_str}")
+
+        n_cit = rag.get("fragmentos_citados", 0)
+        top_sc = rag.get("top_score")
+        sc_str = f" (Top-Score: {top_sc:.2f})" if top_sc is not None else ""
+        print_func(f"  * Citas / Fragmentos aplicados:         {n_cit} fragmentos{sc_str}")
+
+        t_ctx = rag.get("tiempo_contexto_ms", 0.0)
+        print_func(f"  * Tiempo aplicación de contexto:        {t_ctx:.1f} ms")
+
+        tok_ctx = rag.get("tokens_contexto", 0)
+        chars_ctx = rag.get("chars_contexto", 0)
+        print_func(f"  * Tokens de contexto inyectados:        {tok_ctx} tokens (~{chars_ctx} caracteres)")
+
+        ficheros = rag.get("ficheros_consultados", [])
+        if ficheros:
+            fich_str = ", ".join(ficheros[:3]) + (f" (+{len(ficheros)-3} más)" if len(ficheros) > 3 else "")
+            print_func(f"  * Ficheros consultados:                 {fich_str}")
+
+    hw = metricas.get("hardware")
+    if hw:
+        print_func("\n  [CONSUMO DE HARDWARE EN TIEMPO REAL]")
+        cores_str = f" ({hw.nucleos_cpu})" if getattr(hw, "nucleos_cpu", "") else ""
+        print_func(f"  * CPU:                                  {hw.cpu_pct:.1f} %{cores_str}")
+        print_func(f"  * RAM:                                  {hw.ram_usada_gb:.1f} / {hw.ram_total_gb:.1f} GB ({hw.ram_pct:.1f} %)")
+        gpu_nom = getattr(hw, "gpu_nombre", "") or "GPU"
+        gpu_tip = getattr(hw, "gpu_tipo", "")
+        tip_str = f" [{gpu_tip}]" if gpu_tip else ""
+        print_func(f"  * VRAM / GTT:                           {hw.vram_usada_gb:.1f} / {hw.vram_total_gb:.1f} GB ({gpu_nom})")
+        print_func(f"  * GPU:                                  {gpu_nom}{tip_str}")
+        du_lib = getattr(hw, "disco_libre_gb", 0.0)
+        print_func(f"  * Disco:                                {hw.disco_usado_gb:.1f} / {hw.disco_total_gb:.1f} GB ({hw.disco_pct:.1f} %) [{du_lib:.1f} GB libres]")
+        if getattr(hw, "temperatura_c", None) is not None:
+            alerta = " [! ALERTA TÉRMICA !]" if hw.es_critica else ""
+            print_func(f"  * Temperatura Silicio:                  {hw.temperatura_c:.1f} °C{alerta}")
+
     print_func("-" * 75)
 
 
@@ -854,6 +909,8 @@ def ejecutar_chat_terminal(
             # Búsqueda semántica híbrida si hay proyecto activo (RAG Local)
             fuentes_turno: list[dict[str, Any]] = []
             prompt_usuario_final = msg
+            datos_rag_turno: Optional[dict[str, Any]] = None
+
             if proy_activo:
                 try:
                     consulta_rag = msg
@@ -863,16 +920,38 @@ def ejecutar_chat_terminal(
                         if previos_usr:
                             consulta_rag = f"{previos_usr[-1]} {msg}"
 
+                    t_busq_0 = time.perf_counter()
                     ctx_doc, fuentes_turno = gestor_proy.buscar_contexto_hibrido(
                         proyecto_id=proy_activo["id"],
                         consulta=consulta_rag,
                         top_k=5,
                         funcion_embedding=fn_emb,
                     )
+                    t_busq_1 = time.perf_counter()
+
+                    t_ctx_0 = time.perf_counter()
+                    tokens_ctx = 0
                     if ctx_doc:
                         prompt_usuario_final = (
                             f"{msg}\n\n[Contexto del Repositorio/Documentación]:\n{ctx_doc}"
                         )
+                        tokens_ctx = medir_tokens_mensaje(cli, ctx_doc)
+                    t_ctx_1 = time.perf_counter()
+
+                    n_fragmentos_totales = len(gestor_proy._chunks_texto.get(proy_activo["id"], []))
+                    ficheros_consultados = list(dict.fromkeys(f.get("archivo", "") for f in fuentes_turno if f.get("archivo")))
+                    top_score = fuentes_turno[0].get("relevancia") if fuentes_turno else None
+
+                    datos_rag_turno = {
+                        "tiempo_busqueda_ms": (t_busq_1 - t_busq_0) * 1000.0,
+                        "fragmentos_evaluados": n_fragmentos_totales,
+                        "fragmentos_citados": len(fuentes_turno),
+                        "top_score": top_score,
+                        "tiempo_contexto_ms": (t_ctx_1 - t_ctx_0) * 1000.0,
+                        "tokens_contexto": tokens_ctx,
+                        "chars_contexto": len(ctx_doc) if ctx_doc else 0,
+                        "ficheros_consultados": ficheros_consultados,
+                    }
                 except Exception as e_rag:
                     logger.warning(f"Fallo al recuperar contexto RAG: {e_rag}", exc_info=True)
                     print_func(f"[!] No se pudo recuperar contexto del repositorio: {e_rag}")
@@ -916,6 +995,7 @@ def ejecutar_chat_terminal(
                     tiempo_total_s=tiempo_transcurrido,
                     cliente=cli,
                     contenido_salida=contenido_asistente,
+                    metricas_rag=datos_rag_turno,
                 )
                 mostrar_metricas_turno(metricas, print_func=print_func)
 

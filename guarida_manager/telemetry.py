@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -23,6 +24,13 @@ class MetricasTelemetria:
     vram_total_gb: float
     temperatura_c: Optional[float] = None
     es_critica: bool = False
+    disco_usado_gb: float = 0.0
+    disco_total_gb: float = 0.0
+    disco_pct: float = 0.0
+    disco_libre_gb: float = 0.0
+    gpu_nombre: str = ""
+    gpu_tipo: str = ""
+    nucleos_cpu: str = ""
 
 
 class MonitorTelemetriaHardware:
@@ -90,6 +98,19 @@ class MonitorTelemetriaHardware:
         temp = cls.obtener_temperatura_actual()
         es_critica = temp is not None and temp >= 82.0
 
+        try:
+            du = shutil.disk_usage(os.getcwd())
+            disco_total = du.total / (1024 ** 3)
+            disco_usado = du.used / (1024 ** 3)
+            disco_libre = du.free / (1024 ** 3)
+            disco_pct = (du.used / du.total * 100.0) if du.total > 0 else 0.0
+        except Exception:
+            disco_total = disco_usado = disco_libre = disco_pct = 0.0
+
+        nucleos_cpu = f"{hw.nucleos_fisicos}C / {hw.nucleos_logicos}T"
+        gpu_nombre = hw.nombre_gpu_principal or "CPU"
+        gpu_tipo = hw.tipo_gpu_principal or "CPU"
+
         return MetricasTelemetria(
             cpu_pct=round(cpu, 1),
             ram_usada_gb=round(ram_usada, 2),
@@ -99,6 +120,13 @@ class MonitorTelemetriaHardware:
             vram_total_gb=round(vram_total, 2),
             temperatura_c=temp,
             es_critica=es_critica,
+            disco_usado_gb=round(disco_usado, 1),
+            disco_total_gb=round(disco_total, 1),
+            disco_pct=round(disco_pct, 1),
+            disco_libre_gb=round(disco_libre, 1),
+            gpu_nombre=gpu_nombre,
+            gpu_tipo=gpu_tipo,
+            nucleos_cpu=nucleos_cpu,
         )
 
     @classmethod

@@ -9,6 +9,7 @@ from guarida_manager.chat import (
     calcular_metricas_interaccion,
     ejecutar_chat_terminal,
     medir_tokens_mensaje,
+    mostrar_metricas_turno,
     mostrar_parejas_recomendadas,
     obtener_parejas_recomendadas,
 )
@@ -373,6 +374,70 @@ class TestChatTerminal(unittest.TestCase):
         texto_unido = "\n".join(salidas)
         self.assertIn("Reintentando en modo CPU seguro", texto_unido)
         self.assertEqual(mock_srv.iniciar_servidor.call_count, 2)
+
+    def test_mostrar_metricas_turno_con_rag_y_hardware(self):
+        from guarida_manager.telemetry import MetricasTelemetria
+
+        hw_mock = MetricasTelemetria(
+            cpu_pct=25.4,
+            ram_usada_gb=12.2,
+            ram_total_gb=32.0,
+            ram_pct=38.1,
+            vram_usada_gb=4.5,
+            vram_total_gb=16.0,
+            temperatura_c=55.0,
+            disco_usado_gb=200.0,
+            disco_total_gb=500.0,
+            disco_pct=40.0,
+            disco_libre_gb=300.0,
+            gpu_nombre="Intel Iris Xe",
+            gpu_tipo="Integrada / APU",
+            nucleos_cpu="4C / 8T",
+        )
+
+        metricas_rag = {
+            "tiempo_busqueda_ms": 14.8,
+            "fragmentos_evaluados": 7468,
+            "fragmentos_citados": 5,
+            "top_score": 0.88,
+            "tiempo_contexto_ms": 3.2,
+            "tokens_contexto": 1250,
+            "chars_contexto": 5000,
+            "ficheros_consultados": ["Manual.pdf", "Doc.odt"],
+        }
+
+        metricas = {
+            "tokens_mensaje": 25,
+            "tokens_enviados_realmente": 1400,
+            "tokens_generados": 180,
+            "tokens_totales": 1580,
+            "tiempo_total_s": 6.5,
+            "latencia_ms": 6500.0,
+            "velocidad_generacion_tok_s": 27.69,
+            "velocidad_prompt_tok_s": 110.5,
+            "rag": metricas_rag,
+            "hardware": hw_mock,
+        }
+
+        salidas = []
+        mostrar_metricas_turno(metricas, print_func=salidas.append)
+        texto = "\n".join(salidas)
+
+        self.assertIn("[MÉTRICAS DEL MENSAJE E INFERENCIA]", texto)
+        self.assertIn("Velocidad de generación (TG):         27.69 tok/s", texto)
+        self.assertIn("[TRABAJO CON FICHEROS / RAG LOCAL]", texto)
+        self.assertIn("Búsqueda de referencias:              14.8 ms (7468 fragmentos evaluados)", texto)
+        self.assertIn("Citas / Fragmentos aplicados:         5 fragmentos (Top-Score: 0.88)", texto)
+        self.assertIn("Tiempo aplicación de contexto:        3.2 ms", texto)
+        self.assertIn("Tokens de contexto inyectados:        1250 tokens (~5000 caracteres)", texto)
+        self.assertIn("Ficheros consultados:                 Manual.pdf, Doc.odt", texto)
+        self.assertIn("[CONSUMO DE HARDWARE EN TIEMPO REAL]", texto)
+        self.assertIn("CPU:                                  25.4 % (4C / 8T)", texto)
+        self.assertIn("RAM:                                  12.2 / 32.0 GB (38.1 %)", texto)
+        self.assertIn("VRAM / GTT:                           4.5 / 16.0 GB (Intel Iris Xe)", texto)
+        self.assertIn("GPU:                                  Intel Iris Xe [Integrada / APU]", texto)
+        self.assertIn("Disco:                                200.0 / 500.0 GB (40.0 %) [300.0 GB libres]", texto)
+        self.assertIn("Temperatura Silicio:                  55.0 °C", texto)
 
 
 if __name__ == "__main__":
