@@ -419,7 +419,7 @@ def _seleccionar_pareja_manual(
     locales = {m["id"]: m for m in menu_actions.obtener_modelos_locales(gestor_cache)}
     todos_modelos = CatalogoModelos.MODELOS
 
-    gens = [m_id for m_id, m in todos_modelos.items() if m.categoria in ("chat", "coder", "uncensored")]
+    gens = [m_id for m_id, m in todos_modelos.items() if m.categoria in ("chat", "coder", "uncensored", "reasoning")]
     embs = [m_id for m_id, m in todos_modelos.items() if m.categoria == "embedding"]
 
     print_func("\n--- SELECCIÓN MANUAL: 1. MODELO GENERATIVO (CHAT / CÓDIGO) ---")
@@ -804,13 +804,15 @@ def ejecutar_chat_terminal(
                 )
             docs_idx = cache.listar_documentos_proyecto(proy_activo["id"])
             if docs_idx:
-                lineas_docs = [f"- {d['ruta_relativa']} ({d['tipo_documento']})" for d in docs_idx[:60]]
-                extra_aviso = f"\n  (y {len(docs_idx) - 60} ficheros más)" if len(docs_idx) > 60 else ""
                 prompt_sistema += (
-                    f"\n\nTienes acceso y visibilidad completa sobre los siguientes {len(docs_idx)} ficheros del proyecto '{proy_activo['nombre']}':\n"
-                    + "\n".join(lineas_docs)
-                    + extra_aviso
-                    + "\nCuando el usuario pregunte qué ficheros ves o sobre qué documentos tienes acceso, responde confirmando estos documentos."
+                    f"\n\n[PROYECTO ACTIVO]: '{proy_activo['nombre']}' ({len(docs_idx)} archivos indexados).\n"
+                    "DIRECTIVAS ESTRICTAS DE RESPUESTA Y FIDELIDAD DOCUMENTAL:\n"
+                    "1. Responde ÚNICAMENTE basándote en la información explícita de los fragmentos en [Contexto del Repositorio/Documentación].\n"
+                    "2. Si la información no aparece en los fragmentos citados, responde con total sinceridad: "
+                    "'No consta en los fragmentos disponibles del documento consultado'.\n"
+                    "3. NUNCA inventes requisitos, normativas, excepciones ni nombres de documentos o archivos que no se indiquen explícitamente en el contexto.\n"
+                    "4. Cita con precisión las páginas, artículos o secciones que sustentan tu respuesta.\n"
+                    "5. Para listar los archivos indexados del proyecto, indícale al usuario que use el comando '/ficheros'."
                 )
                 historial[0]["content"] = prompt_sistema
         except Exception as e_idx:
@@ -852,10 +854,17 @@ def ejecutar_chat_terminal(
             prompt_usuario_final = msg
             if proy_activo:
                 try:
+                    consulta_rag = msg
+                    # Expansión conversacional: si es repregunta corta, incorporar términos del turno anterior
+                    if len(historial) >= 3 and len(msg.split()) < 15:
+                        previos_usr = [m["content"] for m in historial if m["role"] == "user"]
+                        if previos_usr:
+                            consulta_rag = f"{previos_usr[-1]} {msg}"
+
                     ctx_doc, fuentes_turno = gestor_proy.buscar_contexto_hibrido(
                         proyecto_id=proy_activo["id"],
-                        consulta=msg,
-                        top_k=3,
+                        consulta=consulta_rag,
+                        top_k=5,
                         funcion_embedding=fn_emb,
                     )
                     if ctx_doc:

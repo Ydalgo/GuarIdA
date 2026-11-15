@@ -839,13 +839,35 @@ class GestorProyectos:
         tokens_q = set(re.findall(r"[a-zA-Z0-9_]{3,}", consulta.lower()))
         consulta_min = consulta.lower()
 
+        # Detección de filtro por documento si la consulta menciona un archivo concreto
+        filtro_archivo: Optional[str] = None
+        consulta_busqueda = consulta
+        for ch in chunks:
+            nom_arch = Path(ch.ruta_archivo).name.lower()
+            stem_arch = Path(ch.ruta_archivo).stem.lower()
+            if len(stem_arch) > 8 and (nom_arch in consulta_min or stem_arch in consulta_min):
+                filtro_archivo = stem_arch
+                # Despojar el nombre del archivo de la búsqueda para que la portada no eclipse el contenido
+                for palabra in stem_arch.split():
+                    if len(palabra) > 2:
+                        consulta_busqueda = re.sub(re.escape(palabra), "", consulta_busqueda, flags=re.IGNORECASE)
+                break
+
         motor = self._motores_hibridos.get(proyecto_id)
         if motor is not None and motor.indice_bm25 is not None and motor.elementos:
+            k_busqueda = top_k * 10 if filtro_archivo else top_k
             mejores_objs = motor.buscar_hibrido(
-                consulta=consulta,
+                consulta=consulta_busqueda.strip() or consulta,
                 vector_consulta=vector_consulta,
-                top_k=top_k,
+                top_k=k_busqueda,
             )
+            if filtro_archivo:
+                filtrados = [
+                    (obj, punt) for obj, punt in mejores_objs
+                    if filtro_archivo in getattr(obj, "ruta_archivo", "").lower()
+                ]
+                mejores_objs = filtrados[:top_k] if filtrados else mejores_objs[:top_k]
+
             maximo_teorico = 2.0 / (RRF_K + 1)
             candidatos_ast: list[tuple[NodoAST, float]] = []
             candidatos_chunks: list[tuple[ChunkDocumento, float]] = []
