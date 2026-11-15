@@ -611,7 +611,7 @@ def ejecutar_chat_terminal(
     srv = gestor_server or GestorLlamaServer(gestor_cache=cache)
     host = getattr(srv, "host", None) or (srv.obtener_estado().get("host") if hasattr(srv, "obtener_estado") else None) or "127.0.0.1"
     port = getattr(srv, "port", None) or (srv.obtener_estado().get("port") if hasattr(srv, "obtener_estado") else None) or 8083
-    cli = cliente or ClienteLlamaOffline(host=host, port=port)
+    cli = cliente or ClienteLlamaOffline(host=host, port=port, timeout=300.0)
 
     # 1. Obtener y ofrecer parejas recomendadas con los datos disponibles, permitiendo al usuario decidir
     parejas = obtener_parejas_recomendadas(cache)
@@ -964,10 +964,12 @@ def ejecutar_chat_terminal(
 
             t_inicio = time.perf_counter()
             try:
+                print_func("\n[Generando respuesta...]")
                 resp = cli.completar_chat(
                     mensajes=mensajes_envio,
                     temperatura=0.2,
                     max_tokens=1024,
+                    timeout=300.0,
                 )
                 t_fin = time.perf_counter()
                 tiempo_transcurrido = t_fin - t_inicio

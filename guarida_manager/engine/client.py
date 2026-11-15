@@ -17,7 +17,7 @@ class ClienteLlamaOffline:
         self,
         host: str = "127.0.0.1",
         port: int = 8083,
-        timeout: float = 60.0,
+        timeout: float = 300.0,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
     ):
@@ -111,6 +111,7 @@ class ClienteLlamaOffline:
         stream: bool = False,
         json_mode: bool = False,
         stop: Optional[list[str]] = None,
+        timeout: Optional[float] = None,
     ) -> dict[str, Any]:
         """Genera una respuesta de chat usando el endpoint /v1/chat/completions compatible OpenAI."""
         payload: dict[str, Any] = {
@@ -125,7 +126,7 @@ class ClienteLlamaOffline:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
-        return self._solicitud_http("/v1/chat/completions", metodo="POST", datos=payload)
+        return self._solicitud_http("/v1/chat/completions", metodo="POST", datos=payload, timeout=timeout)
 
     def completar_texto(
         self,
@@ -138,6 +139,7 @@ class ClienteLlamaOffline:
         seed: Optional[int] = None,
         ignore_eos: bool = False,
         stream: bool = False,
+        timeout: Optional[float] = None,
         **extra_kwargs: Any,
     ) -> dict[str, Any]:
         """Genera completado de texto crudo mediante el endpoint nativo /completion de llama.cpp."""
@@ -156,7 +158,7 @@ class ClienteLlamaOffline:
             payload["stop"] = stop
         payload.update(extra_kwargs)
 
-        return self._solicitud_http("/completion", metodo="POST", datos=payload)
+        return self._solicitud_http("/completion", metodo="POST", datos=payload, timeout=timeout)
 
     def medir_ttft_streaming(
         self,
