@@ -781,10 +781,15 @@ def ejecutar_chat_terminal(
             fn_emb = cli_emb.calcular_embedding
         try:
             print_func(f"\nIndexando proyecto '{proy_activo['nombre']}'...")
+
+            def callback_progreso_chat(mensaje: str, pct: float) -> None:
+                print_func(f"  [{pct:5.1f}%] {mensaje}")
+
             res_idx = gestor_proy.escanear_e_indexar_proyecto(
                 proy_activo["id"],
                 funcion_embedding=fn_emb,
                 modelo_emb_id=motor_emb_id or "",
+                callback_progreso=callback_progreso_chat,
             )
             print_func(
                 f"  Archivos: {res_idx['archivos_procesados']} ({res_idx['archivos_sin_cambios']} sin cambios) | "

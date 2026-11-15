@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
@@ -431,10 +432,14 @@ class GestorProyectos:
         self.cache.eliminar_documentos_proyecto(proyecto_id)
 
         for i, archivo in enumerate(archivos_candidatos, start=1):
-            pct = (i / total_archivos) * 100.0
+            pct = (i / total_archivos) * (30.0 if funcion_embedding else 100.0)
             ruta_rel = str(archivo.relative_to(ruta_base))
+            faltan = total_archivos - i
             if callback_progreso:
-                callback_progreso(f"Indexando {ruta_rel}...", pct)
+                callback_progreso(
+                    f"Fichero {i}/{total_archivos}: {ruta_rel} (faltan {faltan} archivos)",
+                    pct,
+                )
 
             try:
                 contenido = extraer_contenido_archivo(archivo)
@@ -491,8 +496,14 @@ class GestorProyectos:
         embeddings_reutilizados = 0
         errores_embedding = 0
         if funcion_embedding:
+            total_chunks = len(chunks_docs)
+            t_inicio_vec = time.perf_counter()
+
             if callback_progreso:
-                callback_progreso("Vectorizando nodos AST y fragmentos (incremental)...", 90.0)
+                callback_progreso(
+                    f"Iniciando vectorización de {total_chunks} fragmentos...",
+                    30.0,
+                )
 
             def _vectorizar(txt: str) -> list[float]:
                 nonlocal embeddings_calculados, embeddings_reutilizados
@@ -510,7 +521,7 @@ class GestorProyectos:
             arbol.indexar_embeddings(_vectorizar, usar_cache=False)
             errores_embedding += sum(1 for n in arbol.nodos.values() if not n.embedding)
 
-            for ch in chunks_docs:
+            for idx_ch, ch in enumerate(chunks_docs, start=1):
                 try:
                     vec = _vectorizar(ch.texto_para_vectorizacion())
                     if vec:
@@ -518,6 +529,20 @@ class GestorProyectos:
                 except Exception as e_emb:
                     errores_embedding += 1
                     logger.warning(f"Fallo de embedding en {ch.id_chunk}: {e_emb}")
+
+                if callback_progreso and (idx_ch % 10 == 0 or idx_ch == 1 or idx_ch == total_chunks):
+                    pct_vec = 30.0 + (idx_ch / max(1, total_chunks)) * 70.0
+                    t_trans = time.perf_counter() - t_inicio_vec
+                    ch_por_seg = idx_ch / max(0.001, t_trans)
+                    restantes = total_chunks - idx_ch
+                    seg_est = restantes / max(0.01, ch_por_seg)
+                    eta_str = f"{int(seg_est)}s" if seg_est < 60 else f"{int(seg_est // 60)}m {int(seg_est % 60)}s"
+                    callback_progreso(
+                        f"Fragmento {idx_ch}/{total_chunks} ({ch.ruta_archivo}) | "
+                        f"Nuevos: {embeddings_calculados}, Caché: {embeddings_reutilizados} | "
+                        f"Faltan {restantes} (~{eta_str} restantes)...",
+                        pct_vec,
+                    )
 
         self._arboles_codigo[proyecto_id] = arbol
         self._chunks_texto[proyecto_id] = chunks_docs
