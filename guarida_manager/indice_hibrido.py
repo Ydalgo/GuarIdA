@@ -49,8 +49,12 @@ class IndiceBM25:
         self.doc_lens = [len(t) for t in self.tokens_doc]
         self.avgdl = sum(self.doc_lens) / max(1, self.corpus_size)
 
-        if _TIENE_RANK_BM25 and self.corpus_size > 0:
+        if _TIENE_RANK_BM25 and self.corpus_size >= 4:
             self._motor_nativo = BM25Okapi(self.tokens_doc, k1=k1, b=b)
+            # Evitar IDFs negativos o nulos en términos muy frecuentes del repositorio
+            for tok, val in self._motor_nativo.idf.items():
+                if val <= 0.0:
+                    self._motor_nativo.idf[tok] = 0.1
         else:
             self._motor_nativo = None
             # Índice invertido propio optimizado para cero dependencias

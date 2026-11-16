@@ -1,13 +1,26 @@
+import json
 import os
 import platform
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
-from typing import Callable, Optional
+import zlib
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import psutil
 
+try:
+    import zstandard as zstd
+
+    _TIENE_ZSTD = True
+except ImportError:
+    zstd = None  # type: ignore
+    _TIENE_ZSTD = False
+
+from guarida_manager import DIRECTORIO_TELEMETRIA_LOGS
 from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.logger import obtener_logger
 
@@ -178,3 +191,109 @@ class MonitorTelemetriaHardware:
                 break
 
         return True
+
+
+class GestorTelemetriaJSONL:
+    """Gestor append-only de eventos de telemetría en JSONL particionado por día con rotación Zstd."""
+
+    def __init__(self, directorio_logs: Optional[Path | str] = None) -> None:
+        self.directorio_logs = Path(directorio_logs) if directorio_logs else DIRECTORIO_TELEMETRIA_LOGS
+        self.directorio_logs.mkdir(parents=True, exist_ok=True)
+
+    def ruta_particion_fecha(self, fecha_str: str) -> Path:
+        """Devuelve la ruta de la partición JSONL correspondiente a una fecha YYYY-MM-DD."""
+        return self.directorio_logs / f"telemetria_{fecha_str}.jsonl"
+
+    def registrar_evento(
+        self,
+        tipo_evento: str,
+        datos: dict[str, Any],
+        timestamp_utc: Optional[datetime] = None,
+        auto_rotar: bool = True,
+    ) -> Path:
+        """Registra un evento estructurado en la partición JSONL diaria sin contención de base de datos."""
+        ts = timestamp_utc or datetime.now(timezone.utc)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = ts.astimezone(timezone.utc)
+
+        fecha_str = ts.strftime("%Y-%m-%d")
+        if auto_rotar:
+            self.rotar_y_comprimir_particiones_antiguas(fecha_activa=fecha_str)
+
+        ruta = self.ruta_particion_fecha(fecha_str)
+        evento = {
+            "timestamp_utc": ts.isoformat(),
+            "tipo_evento": tipo_evento,
+            "datos": datos,
+        }
+        linea = json.dumps(evento, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with open(ruta, "a", encoding="utf-8") as archivo:
+            archivo.write(linea)
+        return ruta
+
+    def registrar_metricas_hardware(
+        self,
+        metricas: Optional[MetricasTelemetria] = None,
+        timestamp_utc: Optional[datetime] = None,
+    ) -> Path:
+        """Captura y registra una instantánea de métricas de hardware en JSONL."""
+        m = metricas or MonitorTelemetriaHardware.capturar_metricas()
+        return self.registrar_evento("metricas_hardware", asdict(m), timestamp_utc=timestamp_utc)
+
+    def rotar_y_comprimir_particiones_antiguas(
+        self, fecha_activa: Optional[str] = None
+    ) -> list[Path]:
+        """Comprime con zstd (o zlib) particiones JSONL de días distintos al activo y elimina el origen."""
+        activa = fecha_activa or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        comprimidos: list[Path] = []
+        for ruta in sorted(self.directorio_logs.glob("telemetria_*.jsonl")):
+            nombre = ruta.name
+            if not (nombre.startswith("telemetria_") and nombre.endswith(".jsonl")):
+                continue
+            fecha_archivo = nombre[len("telemetria_"):-len(".jsonl")]
+            if fecha_archivo == activa:
+                continue
+
+            raw = ruta.read_bytes()
+            if _TIENE_ZSTD and zstd is not None:
+                destino = ruta.with_name(f"{nombre}.zst")
+                if destino.exists():
+                    raw = zstd.ZstdDecompressor().decompress(destino.read_bytes()) + raw
+                destino.write_bytes(zstd.ZstdCompressor(level=3).compress(raw))
+            else:
+                destino = ruta.with_name(f"{nombre}.zlib")
+                if destino.exists():
+                    raw = zlib.decompress(destino.read_bytes()) + raw
+                destino.write_bytes(zlib.compress(raw, level=6))
+
+            ruta.unlink()
+            comprimidos.append(destino)
+
+        return comprimidos
+
+    def leer_eventos(self, fecha_str: Optional[str] = None) -> list[dict[str, Any]]:
+        """Lee eventos desde particiones JSONL activas y comprimidas (.zst / .zlib)."""
+        patron = f"telemetria_{fecha_str}.jsonl*" if fecha_str else "telemetria_*.jsonl*"
+        eventos: list[dict[str, Any]] = []
+
+        for ruta in sorted(self.directorio_logs.glob(patron)):
+            nombre = ruta.name
+            if nombre.endswith(".jsonl"):
+                texto = ruta.read_text(encoding="utf-8")
+            elif nombre.endswith(".jsonl.zst"):
+                if not _TIENE_ZSTD or zstd is None:
+                    raise RuntimeError("Se requiere el paquete 'zstandard' para leer telemetría .zst.")
+                texto = zstd.ZstdDecompressor().decompress(ruta.read_bytes()).decode("utf-8")
+            elif nombre.endswith(".jsonl.zlib"):
+                texto = zlib.decompress(ruta.read_bytes()).decode("utf-8")
+            else:
+                continue
+
+            for linea in texto.splitlines():
+                linea_limpia = linea.strip()
+                if linea_limpia:
+                    eventos.append(json.loads(linea_limpia))
+
+        return eventos

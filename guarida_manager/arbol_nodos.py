@@ -4,6 +4,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from guarida_manager.roles import MensajeInterModelo, RolAgente
@@ -78,6 +79,32 @@ def _extraer_simbolos_nodo_ast(nodo_ast: ast.AST) -> set[str]:
     return simbolos
 
 
+def _extraer_llamadas_ast(nodo_ast: ast.AST) -> list[str]:
+    """Extrae nombres únicos de funciones/métodos invocados dentro de un subárbol AST."""
+    llamadas: list[str] = []
+    vistas: set[str] = set()
+    for sub in ast.walk(nodo_ast):
+        if isinstance(sub, ast.Call):
+            nombre_llamado = ""
+            if isinstance(sub.func, ast.Name):
+                nombre_llamado = sub.func.id
+            elif isinstance(sub.func, ast.Attribute):
+                nombre_llamado = sub.func.attr
+            if nombre_llamado and nombre_llamado not in vistas:
+                vistas.add(nombre_llamado)
+                llamadas.append(nombre_llamado)
+    return llamadas
+
+
+@dataclass(frozen=True)
+class RelacionAST:
+    """Arista dirigida del grafo de dependencias AST (CONTIENE, IMPORTA, HEREDA_DE, LLAMA_A)."""
+
+    origen_id: str
+    destino_id: str
+    tipo_relacion: str
+
+
 class TipoNodoAST(str, Enum):
     MODULO = "modulo"
     CLASE = "clase"
@@ -141,17 +168,55 @@ class ArbolNodosCodigo:
     def __init__(self, ruta_raiz: str = "proyecto"):
         self.ruta_raiz = ruta_raiz
         self.nodos: dict[str, NodoAST] = {}
+        self.relaciones: list[RelacionAST] = []
+        self._relaciones_set: set[tuple[str, str, str]] = set()
+
+    def agregar_relacion(self, origen_id: str, destino_id: str, tipo_relacion: str) -> None:
+        """Registra una arista dirigida única entre dos nodos o referencias de símbolo."""
+        clave = (origen_id, destino_id, tipo_relacion)
+        if clave not in self._relaciones_set:
+            self._relaciones_set.add(clave)
+            self.relaciones.append(
+                RelacionAST(origen_id=origen_id, destino_id=destino_id, tipo_relacion=tipo_relacion)
+            )
 
     def agregar_nodo(self, nodo: NodoAST) -> None:
         """Registra un nodo en el árbol y mantiene la coherencia de enlaces padre-hijo."""
         self.nodos[nodo.id_nodo] = nodo
-        if nodo.padre_id and nodo.padre_id in self.nodos:
-            padre = self.nodos[nodo.padre_id]
-            if nodo.id_nodo not in padre.hijos_ids:
-                padre.hijos_ids.append(nodo.id_nodo)
+        if nodo.padre_id:
+            self.agregar_relacion(nodo.padre_id, nodo.id_nodo, "CONTIENE")
+            if nodo.padre_id in self.nodos:
+                padre = self.nodos[nodo.padre_id]
+                if nodo.id_nodo not in padre.hijos_ids:
+                    padre.hijos_ids.append(nodo.id_nodo)
 
     def obtener_nodo(self, id_nodo: str) -> Optional[NodoAST]:
         return self.nodos.get(id_nodo)
+
+    def resolver_enlaces_simbolos(self) -> list[RelacionAST]:
+        """Resuelve aristas simbólicas (`simbolo::X`) contra nodos reales indexados en el árbol."""
+        indice_simbolos: dict[str, list[str]] = {}
+        for nodo in self.nodos.values():
+            claves = {nodo.nombre.lower()}
+            if nodo.tipo == TipoNodoAST.MODULO:
+                claves.add(Path(nodo.ruta_archivo).stem.lower())
+            for k in claves:
+                if k:
+                    indice_simbolos.setdefault(k, []).append(nodo.id_nodo)
+
+        for rel in list(self.relaciones):
+            if not rel.destino_id.startswith("simbolo::"):
+                continue
+            simbolo_raw = rel.destino_id[len("simbolo::"):].strip().lower()
+            candidatos = [simbolo_raw]
+            if "." in simbolo_raw:
+                candidatos.extend(part for part in simbolo_raw.split(".") if part)
+            for cand in candidatos:
+                for id_real in indice_simbolos.get(cand, ()):
+                    if id_real != rel.origen_id:
+                        self.agregar_relacion(rel.origen_id, id_real, rel.tipo_relacion)
+
+        return list(self.relaciones)
 
     def construir_desde_codigo_python(self, codigo_fuente: str, ruta_archivo: str = "modulo.py") -> None:
         """Parsea código Python en un árbol de nodos AST jerárquico."""
@@ -193,7 +258,16 @@ class ArbolNodosCodigo:
             return "\n".join(lineas_codigo[max(0, linea_ini - 1) : linea_f])
 
         for elem in arbol_ast.body:
-            if isinstance(elem, ast.ClassDef):
+            if isinstance(elem, ast.Import):
+                for alias in elem.names:
+                    self.agregar_relacion(id_raiz, f"simbolo::{alias.name}", "IMPORTA")
+            elif isinstance(elem, ast.ImportFrom):
+                if elem.module:
+                    self.agregar_relacion(id_raiz, f"simbolo::{elem.module}", "IMPORTA")
+                for alias in elem.names:
+                    if alias.name != "*":
+                        self.agregar_relacion(id_raiz, f"simbolo::{alias.name}", "IMPORTA")
+            elif isinstance(elem, ast.ClassDef):
                 id_clase = f"{id_raiz}::clase::{elem.name}"
                 doc_clase = ast.get_docstring(elem) or ""
                 bases = [ast.unparse(b) for b in elem.bases] if hasattr(ast, "unparse") else []
@@ -212,6 +286,9 @@ class ArbolNodosCodigo:
                     simbolos={elem.name.lower()} | _extraer_simbolos_nodo_ast(elem),
                 )
                 self.agregar_nodo(nodo_clase)
+                for base in bases:
+                    if base.strip():
+                        self.agregar_relacion(id_clase, f"simbolo::{base.strip()}", "HEREDA_DE")
 
                 # Métodos de la clase
                 for sub in elem.body:
@@ -233,6 +310,8 @@ class ArbolNodosCodigo:
                             simbolos={sub.name.lower()} | _extraer_simbolos_nodo_ast(sub),
                         )
                         self.agregar_nodo(nodo_metodo)
+                        for llamada in _extraer_llamadas_ast(sub):
+                            self.agregar_relacion(id_metodo, f"simbolo::{llamada}", "LLAMA_A")
 
             elif isinstance(elem, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 id_func = f"{id_raiz}::funcion::{elem.name}"
@@ -252,6 +331,8 @@ class ArbolNodosCodigo:
                     simbolos={elem.name.lower()} | _extraer_simbolos_nodo_ast(elem),
                 )
                 self.agregar_nodo(nodo_func)
+                for llamada in _extraer_llamadas_ast(elem):
+                    self.agregar_relacion(id_func, f"simbolo::{llamada}", "LLAMA_A")
 
     def indexar_embeddings(
         self,

@@ -77,6 +77,7 @@ class DefinicionModeloCatalogo:
     sha256_esperado: Optional[str] = None
     revision: str = "main"
     formato: str = "gguf"  # "gguf", "safetensors", "pytorch"
+    mmproj_filename: Optional[str] = None
 
 
 class CatalogoModelos:
@@ -716,6 +717,28 @@ class CatalogoModelos:
             es_sin_censura=False,
             descripcion="Pesos Safetensors de Qwen2.5 0.5B para carga directa en tensores.",
             formato="safetensors",
+        ),
+        # =========================================================================
+        # VISIÓN MULTIMODAL / VLM (INGESTA DE DIAGRAMAS, CAPTURAS E IMÁGENES)
+        # =========================================================================
+        "qwen2-vl-2b-instruct-q4": DefinicionModeloCatalogo(
+            id="qwen2-vl-2b-instruct-q4",
+            nombre_legible="Qwen2-VL 2B Instruct (Q4_K_M + mmproj - Visión/OCR)",
+            categoria="vision",
+            cuantizacion="Q4_K_M",
+            idiomas_destacados="multilingüe, diagramas, código",
+            repo_hf="bartowski/Qwen2-VL-2B-Instruct-GGUF",
+            filename="Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
+            tamano_gb=1.65,
+            ram_minima_gb=4.0,
+            ram_recomendada_gb=8.0,
+            licencia="apache-2.0",
+            training_summary_url="https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct",
+            copyright_compliant=True,
+            es_sin_censura=False,
+            descripcion="Modelo Vision-Language local para transcripción de diagramas de arquitectura, tablas y capturas de código.",
+            formato="gguf",
+            mmproj_filename="mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
         ),
     }
 

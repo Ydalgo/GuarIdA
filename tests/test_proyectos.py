@@ -382,5 +382,219 @@ class TestProyectosCorrecciones(TestProyectosNotebookLM):
         self.assertEqual(doc_normativa["tipo_documento"], "documento_ofimatico")
 
 
+class TestArquitecturaAvanzadaADR0012(unittest.TestCase):
+    """Pruebas de integración para Fases 3, 4, 5 y 6 del ADR 0012."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.cache = GestorCache(Path(self.temp_dir) / "config.db")
+        self.gestor = GestorProyectos(gestor_cache=self.cache)
+        self.dir_repo = Path(self.temp_dir) / "repo_avanzado"
+        self.dir_repo.mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_fase3_grafo_ast_recursivo_y_multihop(self):
+        (self.dir_repo / "base.py").write_text(
+            "class MotorBase:\n"
+            "    def inicializar(self):\n"
+            "        return True\n\n"
+            "def validar_firma(dato: str) -> bool:\n"
+            "    return bool(dato)\n",
+            encoding="utf-8",
+        )
+        (self.dir_repo / "servicio.py").write_text(
+            "from base import MotorBase, validar_firma\n\n"
+            "class ServicioAuth(MotorBase):\n"
+            "    def autenticar(self, token: str) -> bool:\n"
+            "        return validar_firma(token)\n",
+            encoding="utf-8",
+        )
+
+        proy = self.gestor.crear_proyecto("GrafoAST", self.dir_repo)
+        res = self.gestor.escanear_e_indexar_proyecto(proy.id)
+        self.assertGreater(res["relaciones_ast"], 0)
+
+        deps = self.cache.expandir_dependencias_ast_recursivo(
+            proy.id,
+            ["servicio.py::raiz::clase::ServicioAuth::metodo::autenticar"],
+            max_profundidad=2,
+        )
+        nombres_deps = {d["nombre"] for d in deps}
+        self.assertIn("validar_firma", nombres_deps)
+        self.assertIn("ServicioAuth", nombres_deps)
+
+        ctx, fuentes = self.gestor.buscar_contexto_hibrido(
+            proy.id, "autenticar token", top_k=2
+        )
+        self.assertIn("DEPENDENCIAS DEL GRAFO AST (MULTIHOP)", ctx)
+        self.assertTrue(any(f.get("dependencias_grafo") for f in fuentes))
+
+    def test_fase4_sanitizer_private_y_rgpd_hmac(self):
+        from guarida_manager.security import SanitizadorPrivacidad
+
+        ruta_audit = Path(self.temp_dir) / "auditoria_rgpd.jsonl"
+        san = SanitizadorPrivacidad(
+            modo="estandar",
+            clave_hmac=b"clave_auditoria_prueba",
+            ruta_log_auditoria=ruta_audit,
+        )
+
+        texto_orig = (
+            "Inicio\n<private>API_KEY=super_secreta_123</private>\n"
+            "Contacto: usuario@ejemplo.es DNI 12345678Z IP 192.168.1.50"
+        )
+        res_est = san.sanitizar_texto(texto_orig, origen="nota.md")
+        self.assertNotIn("super_secreta_123", res_est.texto_sanitizado)
+        self.assertIn("[BLOQUE_PRIVADO_OMITIDO]", res_est.texto_sanitizado)
+        self.assertIn("usuario@ejemplo.es", res_est.texto_sanitizado)
+
+        san.configurar_modo("rgpd_estricto")
+        res_rgpd = san.sanitizar_texto(texto_orig, origen="nota.md")
+        self.assertNotIn("usuario@ejemplo.es", res_rgpd.texto_sanitizado)
+        self.assertNotIn("12345678Z", res_rgpd.texto_sanitizado)
+        self.assertNotIn("192.168.1.50", res_rgpd.texto_sanitizado)
+        self.assertIn("[EMAIL_REDACTADO_1]", res_rgpd.texto_sanitizado)
+        self.assertIn("[ID_DOC_REDACTADO_1]", res_rgpd.texto_sanitizado)
+        self.assertIn("[IP_REDACTADA_1]", res_rgpd.texto_sanitizado)
+        self.assertTrue(ruta_audit.exists())
+        contenido_log = ruta_audit.read_text(encoding="utf-8")
+        self.assertIn("hmac_sha256", contenido_log)
+        self.assertNotIn("usuario@ejemplo.es", contenido_log)
+
+        # Integración con GestorProyectos en modo rgpd_estricto
+        (self.dir_repo / "clientes.md").write_text(
+            "# Clientes\nEmail: admin@empresa.es\n<private>SECRET_XYZ</private>\n",
+            encoding="utf-8",
+        )
+        self.gestor.configurar_modo_privacidad("rgpd_estricto")
+        proy = self.gestor.crear_proyecto("RGPD", self.dir_repo)
+        res_idx = self.gestor.escanear_e_indexar_proyecto(proy.id)
+        self.assertGreaterEqual(res_idx["redacciones_privacidad"], 2)
+        ctx, _ = self.gestor.buscar_contexto_hibrido(proy.id, "Clientes", top_k=3)
+        self.assertNotIn("admin@empresa.es", ctx)
+        self.assertNotIn("SECRET_XYZ", ctx)
+
+    def test_fase5_router_vlm_imagenes_y_catalogo(self):
+        import struct
+        from guarida_manager.downloader.models import CatalogoModelos
+        from guarida_manager.proyectos import RouterIngestaVisualVLM
+
+        vlm_cat = CatalogoModelos.obtener_modelo("qwen2-vl-2b-instruct-q4")
+        self.assertIsNotNone(vlm_cat)
+        self.assertEqual(vlm_cat.categoria, "vision")
+        self.assertTrue(vlm_cat.mmproj_filename)
+
+        # Cabecera PNG válida de 320x240
+        png_dummy = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 320, 240)
+            + b"\x08\x02\x00\x00\x00"
+        )
+        ruta_png = self.dir_repo / "diagrama_arquitectura.png"
+        ruta_png.write_bytes(png_dummy)
+
+        meta_fallback = RouterIngestaVisualVLM.transcribir_imagen(ruta_png)
+        self.assertIn("PNG", meta_fallback)
+        self.assertIn("320x240 px", meta_fallback)
+
+        proy = self.gestor.crear_proyecto("Vision", self.dir_repo)
+        self.gestor.escanear_e_indexar_proyecto(
+            proy.id,
+            funcion_vlm=lambda ruta, prompt: f"Nodo Gateway -> Nodo AuthDB (archivo {ruta.name})",
+        )
+        docs = {d["ruta_relativa"]: d for d in self.cache.listar_documentos_proyecto(proy.id)}
+        self.assertEqual(docs["diagrama_arquitectura.png"]["tipo_documento"], "imagen_vlm")
+        ctx, _ = self.gestor.buscar_contexto_hibrido(proy.id, "Gateway AuthDB", top_k=2)
+        self.assertIn("Gateway", ctx)
+
+    def test_fase6_servidor_mcp_stdio(self):
+        import io
+        import json
+        from guarida_manager.mcp import ServidorMCPGuarida
+
+        (self.dir_repo / "app.py").write_text(
+            "def procesar_pedido(id_pedido: int) -> str:\n"
+            "    return str(id_pedido)\n",
+            encoding="utf-8",
+        )
+        proy = self.gestor.crear_proyecto("MCPProy", self.dir_repo)
+        self.gestor.escanear_e_indexar_proyecto(proy.id)
+
+        servidor = ServidorMCPGuarida(gestor_cache=self.cache, gestor_proyectos=self.gestor)
+        peticiones = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "guarida_registrar_hecho",
+                    "arguments": {
+                        "sujeto": "mcp_puerto",
+                        "predicado": "es",
+                        "objeto": "stdio",
+                        "proyecto_id": proy.id,
+                    },
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "guarida_consultar_memoria",
+                    "arguments": {"proyecto_id": proy.id},
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "guarida_buscar_contexto",
+                    "arguments": {"proyecto_id": proy.id, "consulta": "procesar_pedido"},
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "guarida_sanitizar_texto",
+                    "arguments": {
+                        "texto": "Correo test@dom.es <private>oculto</private>",
+                        "modo": "rgpd_estricto",
+                    },
+                },
+            },
+        ]
+        stream_in = io.StringIO("\n".join(json.dumps(p) for p in peticiones) + "\n")
+        stream_out = io.StringIO()
+        servidor.servir_stdio(stream_in=stream_in, stream_out=stream_out)
+
+        respuestas = [json.loads(l) for l in stream_out.getvalue().splitlines() if l.strip()]
+        # 6 peticiones con id (la notificación no produce respuesta)
+        self.assertEqual(len(respuestas), 6)
+        self.assertEqual(respuestas[0]["result"]["serverInfo"]["name"], "guarida-mcp")
+        nombres_tools = {t["name"] for t in respuestas[1]["result"]["tools"]}
+        self.assertIn("guarida_expandir_grafo_ast", nombres_tools)
+
+        payload_mem = json.loads(respuestas[3]["result"]["content"][0]["text"])
+        self.assertEqual(payload_mem["hechos"][0]["objeto"], "stdio")
+
+        payload_ctx = json.loads(respuestas[4]["result"]["content"][0]["text"])
+        self.assertIn("procesar_pedido", payload_ctx["contexto"])
+
+        payload_san = json.loads(respuestas[5]["result"]["content"][0]["text"])
+        self.assertNotIn("test@dom.es", payload_san["texto_sanitizado"])
+        self.assertNotIn("oculto", payload_san["texto_sanitizado"])
+
+
 if __name__ == "__main__":
     unittest.main()

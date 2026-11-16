@@ -1,11 +1,52 @@
+import hashlib
 import sqlite3
+import zlib
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator, Optional
 
-from guarida_manager import RUTA_BASE_DATOS_PREDETERMINADA
+try:
+    import zstandard as zstd
+
+    _TIENE_ZSTD = True
+except ImportError:
+    zstd = None  # type: ignore
+    _TIENE_ZSTD = False
+
+from guarida_manager import (
+    RUTA_BASE_DATOS_PREDETERMINADA,
+    RUTA_DB_CONFIG_PREDETERMINADA,
+    RUTA_DB_PROYECTOS_PREDETERMINADA,
+    RUTA_DB_SESIONES_PREDETERMINADA,
+)
+
+
+def _comprimir_contenido_mensaje(texto: str) -> tuple[str, bytes, str]:
+    """Comprime el cuerpo de un mensaje usando zstd (o zlib) y devuelve (algoritmo, blob, sha256)."""
+    datos_crudos = texto.encode("utf-8")
+    digest = hashlib.sha256(datos_crudos).hexdigest()
+    if _TIENE_ZSTD and zstd is not None:
+        compresor = zstd.ZstdCompressor(level=3)
+        return "zstd", compresor.compress(datos_crudos), digest
+    return "zlib", zlib.compress(datos_crudos, level=6), digest
+
+
+def _descomprimir_contenido_mensaje(compresion: str, datos: bytes) -> str:
+    """Descomprime el cuerpo de un mensaje almacenado en contenido_mensajes."""
+    if not datos:
+        return ""
+    if compresion == "zstd":
+        if not _TIENE_ZSTD or zstd is None:
+            raise RuntimeError("Se requiere el paquete 'zstandard' para leer mensajes comprimidos con zstd.")
+        descompresor = zstd.ZstdDecompressor()
+        return descompresor.decompress(datos).decode("utf-8")
+    if compresion == "zlib":
+        return zlib.decompress(datos).decode("utf-8")
+    if compresion == "none":
+        return datos.decode("utf-8")
+    raise ValueError(f"Algoritmo de compresión no soportado: {compresion}")
 
 
 @dataclass(frozen=True)
@@ -84,6 +125,23 @@ class MensajeChatRegistro:
 
 
 @dataclass(frozen=True)
+class HechoMemoriaRegistro:
+    sujeto: str
+    predicado: str
+    objeto: str
+    proyecto_id: Optional[str] = None
+    sesion_id: Optional[str] = None
+    mensaje_id: Optional[int] = None
+    origen_tipo: str = "chat"
+    sha_origen: Optional[str] = None
+    estado: str = "activo"
+    sustituido_por_id: Optional[int] = None
+    fecha_creacion: Optional[str] = None
+    fecha_superseded: Optional[str] = None
+    id: Optional[int] = None
+
+
+@dataclass(frozen=True)
 class ConfiguracionOptimaRegistro:
     modelo_id: str
     hash_hardware: str
@@ -103,18 +161,47 @@ class ConfiguracionOptimaRegistro:
 
 
 class GestorCache:
-    def __init__(self, ruta_base_datos: Optional[Path | str] = None) -> None:
+    def __init__(
+        self,
+        ruta_base_datos: Optional[Path | str] = None,
+        ruta_db_sesiones: Optional[Path | str] = None,
+        ruta_db_proyectos: Optional[Path | str] = None,
+    ) -> None:
         if ruta_base_datos is None:
-            self.ruta_db = RUTA_BASE_DATOS_PREDETERMINADA
+            self.ruta_db_config = RUTA_DB_CONFIG_PREDETERMINADA
+            self.ruta_db = self.ruta_db_config
+            self.ruta_db_sesiones = (
+                Path(ruta_db_sesiones) if ruta_db_sesiones else RUTA_DB_SESIONES_PREDETERMINADA
+            )
+            self.ruta_db_proyectos = (
+                Path(ruta_db_proyectos) if ruta_db_proyectos else RUTA_DB_PROYECTOS_PREDETERMINADA
+            )
         else:
-            self.ruta_db = Path(ruta_base_datos)
+            ruta_base = Path(ruta_base_datos)
+            if ruta_base.suffix == "":
+                self.ruta_db_config = ruta_base / "config.db"
+                base_dir = ruta_base
+                prefijo = ""
+            else:
+                self.ruta_db_config = ruta_base
+                base_dir = ruta_base.parent
+                prefijo = "" if ruta_base.name in ("config.db", "guarida.db") else f"{ruta_base.stem}_"
+            self.ruta_db = self.ruta_db_config
+            self.ruta_db_sesiones = (
+                Path(ruta_db_sesiones) if ruta_db_sesiones else (base_dir / f"{prefijo}sesiones_chat.db")
+            )
+            self.ruta_db_proyectos = (
+                Path(ruta_db_proyectos) if ruta_db_proyectos else (base_dir / f"{prefijo}proyecto_grafo.db")
+            )
 
-        self.ruta_db.parent.mkdir(parents=True, exist_ok=True)
+        self.ruta_db_config.parent.mkdir(parents=True, exist_ok=True)
+        self.ruta_db_sesiones.parent.mkdir(parents=True, exist_ok=True)
+        self.ruta_db_proyectos.parent.mkdir(parents=True, exist_ok=True)
         self.inicializar_tablas()
 
     @contextmanager
-    def sesion(self) -> Generator[sqlite3.Connection, None, None]:
-        conexion = sqlite3.connect(str(self.ruta_db), timeout=30.0)
+    def _abrir_sesion_sqlite(self, ruta_archivo: Path) -> Generator[sqlite3.Connection, None, None]:
+        conexion = sqlite3.connect(str(ruta_archivo), timeout=30.0)
         conexion.row_factory = sqlite3.Row
         conexion.execute("PRAGMA foreign_keys = ON;")
         conexion.execute("PRAGMA journal_mode = WAL;")
@@ -124,8 +211,28 @@ class GestorCache:
         finally:
             conexion.close()
 
+    @contextmanager
+    def sesion(self) -> Generator[sqlite3.Connection, None, None]:
+        with self._abrir_sesion_sqlite(self.ruta_db_config) as conexion:
+            yield conexion
+
+    @contextmanager
+    def sesion_config(self) -> Generator[sqlite3.Connection, None, None]:
+        with self._abrir_sesion_sqlite(self.ruta_db_config) as conexion:
+            yield conexion
+
+    @contextmanager
+    def sesion_proyectos(self) -> Generator[sqlite3.Connection, None, None]:
+        with self._abrir_sesion_sqlite(self.ruta_db_proyectos) as conexion:
+            yield conexion
+
+    @contextmanager
+    def sesion_chat(self) -> Generator[sqlite3.Connection, None, None]:
+        with self._abrir_sesion_sqlite(self.ruta_db_sesiones) as conexion:
+            yield conexion
+
     def inicializar_tablas(self) -> None:
-        with self.sesion() as conexion:
+        with self.sesion_config() as conexion:
             conexion.execute(
                 """
                 CREATE TABLE IF NOT EXISTS modelos (
@@ -281,6 +388,7 @@ class GestorCache:
             except Exception:
                 pass
 
+        with self.sesion_proyectos() as conexion:
             conexion.execute(
                 """
                 CREATE TABLE IF NOT EXISTS proyectos (
@@ -310,14 +418,66 @@ class GestorCache:
             )
             conexion.execute(
                 """
+                CREATE TABLE IF NOT EXISTS embeddings_cache (
+                    clave TEXT PRIMARY KEY,
+                    modelo_emb_id TEXT NOT NULL,
+                    dimensiones INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    fecha TEXT NOT NULL
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS nodos_ast_grafo (
+                    id_nodo TEXT NOT NULL,
+                    proyecto_id TEXT NOT NULL,
+                    tipo TEXT NOT NULL,
+                    nombre TEXT NOT NULL,
+                    ruta_archivo TEXT NOT NULL,
+                    linea_inicio INTEGER NOT NULL,
+                    linea_fin INTEGER NOT NULL,
+                    resumen_sintactico TEXT DEFAULT '',
+                    PRIMARY KEY (proyecto_id, id_nodo),
+                    FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE CASCADE
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS relaciones_ast_grafo (
+                    proyecto_id TEXT NOT NULL,
+                    origen_id TEXT NOT NULL,
+                    destino_id TEXT NOT NULL,
+                    tipo_relacion TEXT NOT NULL,
+                    PRIMARY KEY (proyecto_id, origen_id, destino_id, tipo_relacion),
+                    FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE CASCADE
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_rel_ast_origen
+                ON relaciones_ast_grafo(proyecto_id, origen_id, tipo_relacion);
+                """
+            )
+            conexion.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_rel_ast_destino
+                ON relaciones_ast_grafo(proyecto_id, destino_id, tipo_relacion);
+                """
+            )
+
+        with self.sesion_chat() as conexion:
+            conexion.execute(
+                """
                 CREATE TABLE IF NOT EXISTS sesiones_chat (
                     id TEXT PRIMARY KEY,
                     proyecto_id TEXT,
                     modelo_id TEXT NOT NULL,
                     titulo TEXT NOT NULL,
                     fecha_creacion TEXT NOT NULL,
-                    fecha_actualizacion TEXT NOT NULL,
-                    FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE SET NULL
+                    fecha_actualizacion TEXT NOT NULL
                 );
                 """
             )
@@ -327,7 +487,7 @@ class GestorCache:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     sesion_id TEXT NOT NULL,
                     rol TEXT NOT NULL,
-                    contenido TEXT NOT NULL,
+                    contenido TEXT NOT NULL DEFAULT '',
                     tokens_prompt INTEGER DEFAULT 0,
                     tokens_generados INTEGER DEFAULT 0,
                     fuentes_ast_json TEXT,
@@ -338,13 +498,45 @@ class GestorCache:
             )
             conexion.execute(
                 """
-                CREATE TABLE IF NOT EXISTS embeddings_cache (
-                    clave TEXT PRIMARY KEY,
-                    modelo_emb_id TEXT NOT NULL,
-                    dimensiones INTEGER NOT NULL,
-                    vector BLOB NOT NULL,
-                    fecha TEXT NOT NULL
+                CREATE INDEX IF NOT EXISTS idx_mensajes_chat_sesion
+                ON mensajes_chat(sesion_id);
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS contenido_mensajes (
+                    mensaje_id INTEGER PRIMARY KEY,
+                    hash_sha256 TEXT NOT NULL,
+                    compresion TEXT NOT NULL,
+                    datos_contenido BLOB NOT NULL,
+                    FOREIGN KEY (mensaje_id) REFERENCES mensajes_chat(id) ON DELETE CASCADE
                 );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS hechos_memoria (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    proyecto_id TEXT,
+                    sesion_id TEXT,
+                    mensaje_id INTEGER,
+                    sujeto TEXT NOT NULL,
+                    predicado TEXT NOT NULL,
+                    objeto TEXT NOT NULL,
+                    origen_tipo TEXT NOT NULL DEFAULT 'chat',
+                    sha_origen TEXT NOT NULL,
+                    estado TEXT NOT NULL DEFAULT 'activo',
+                    sustituido_por_id INTEGER,
+                    fecha_creacion TEXT NOT NULL,
+                    fecha_superseded TEXT,
+                    FOREIGN KEY (sustituido_por_id) REFERENCES hechos_memoria(id) ON DELETE SET NULL
+                );
+                """
+            )
+            conexion.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_hechos_memoria_lookup
+                ON hechos_memoria(proyecto_id, sesion_id, estado, sujeto, predicado);
                 """
             )
 
@@ -661,7 +853,7 @@ class GestorCache:
     # --- Métodos para Proyectos y Documentos (NotebookLM Local / Repositorio) ---
 
     def guardar_proyecto(self, proyecto: ProyectoRegistro) -> None:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             conexion.execute(
                 """
                 INSERT INTO proyectos (id, nombre, descripcion, ruta_directorio, fecha_creacion)
@@ -675,7 +867,7 @@ class GestorCache:
             )
 
     def obtener_proyecto(self, proyecto_id: str) -> Optional[dict[str, Any]]:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             cursor = conexion.execute(
                 "SELECT * FROM proyectos WHERE id = ?;", (proyecto_id,)
             )
@@ -683,21 +875,32 @@ class GestorCache:
             return dict(fila) if fila else None
 
     def listar_proyectos(self) -> list[dict[str, Any]]:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             cursor = conexion.execute(
                 "SELECT * FROM proyectos ORDER BY fecha_creacion DESC;"
             )
             return [dict(fila) for fila in cursor.fetchall()]
 
     def eliminar_proyecto(self, proyecto_id: str) -> bool:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             cursor = conexion.execute(
                 "DELETE FROM proyectos WHERE id = ?;", (proyecto_id,)
             )
-            return cursor.rowcount > 0
+            eliminado = cursor.rowcount > 0
+        if eliminado:
+            with self.sesion_chat() as conexion_chat:
+                conexion_chat.execute(
+                    "UPDATE sesiones_chat SET proyecto_id = NULL WHERE proyecto_id = ?;",
+                    (proyecto_id,),
+                )
+                conexion_chat.execute(
+                    "UPDATE hechos_memoria SET proyecto_id = NULL WHERE proyecto_id = ?;",
+                    (proyecto_id,),
+                )
+        return eliminado
 
     def guardar_documento_proyecto(self, doc: DocumentoProyectoRegistro) -> int:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             cursor = conexion.execute(
                 """
                 INSERT INTO documentos_proyecto (
@@ -723,7 +926,7 @@ class GestorCache:
             return cursor.lastrowid or 0
 
     def listar_documentos_proyecto(self, proyecto_id: str) -> list[dict[str, Any]]:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             cursor = conexion.execute(
                 "SELECT * FROM documentos_proyecto WHERE proyecto_id = ? ORDER BY ruta_relativa ASC;",
                 (proyecto_id,),
@@ -731,7 +934,7 @@ class GestorCache:
             return [dict(fila) for fila in cursor.fetchall()]
 
     def eliminar_documentos_proyecto(self, proyecto_id: str) -> None:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             conexion.execute("DELETE FROM documentos_proyecto WHERE proyecto_id = ?;", (proyecto_id,))
 
     # --- Caché persistente de embeddings (indexación incremental) ---
@@ -740,7 +943,7 @@ class GestorCache:
         import array
 
         datos = array.array("f", vector).tobytes()
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             conexion.execute(
                 """
                 INSERT INTO embeddings_cache (clave, modelo_emb_id, dimensiones, vector, fecha)
@@ -756,7 +959,7 @@ class GestorCache:
     def obtener_embedding(self, clave: str) -> Optional[list[float]]:
         import array
 
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             fila = conexion.execute(
                 "SELECT dimensiones, vector FROM embeddings_cache WHERE clave = ?;", (clave,)
             ).fetchone()
@@ -769,7 +972,7 @@ class GestorCache:
         return arr.tolist()
 
     def limpiar_embeddings_modelo(self, modelo_emb_id: str) -> int:
-        with self.sesion() as conexion:
+        with self.sesion_proyectos() as conexion:
             cur = conexion.execute(
                 "DELETE FROM embeddings_cache WHERE modelo_emb_id = ?;", (modelo_emb_id,)
             )
@@ -782,7 +985,7 @@ class GestorCache:
     # --- Métodos para Sesiones y Mensajes de Chat ---
 
     def guardar_sesion_chat(self, sesion: SesionChatRegistro) -> None:
-        with self.sesion() as conexion:
+        with self.sesion_chat() as conexion:
             conexion.execute(
                 """
                 INSERT INTO sesiones_chat (id, proyecto_id, modelo_id, titulo, fecha_creacion, fecha_actualizacion)
@@ -795,7 +998,7 @@ class GestorCache:
             )
 
     def obtener_sesion_chat(self, sesion_id: str) -> Optional[dict[str, Any]]:
-        with self.sesion() as conexion:
+        with self.sesion_chat() as conexion:
             cursor = conexion.execute(
                 "SELECT * FROM sesiones_chat WHERE id = ?;", (sesion_id,)
             )
@@ -803,7 +1006,7 @@ class GestorCache:
             return dict(fila) if fila else None
 
     def listar_sesiones_chat(self, proyecto_id: Optional[str] = None) -> list[dict[str, Any]]:
-        with self.sesion() as conexion:
+        with self.sesion_chat() as conexion:
             if proyecto_id:
                 cursor = conexion.execute(
                     "SELECT * FROM sesiones_chat WHERE proyecto_id = ? ORDER BY fecha_actualizacion DESC;",
@@ -816,12 +1019,13 @@ class GestorCache:
             return [dict(fila) for fila in cursor.fetchall()]
 
     def eliminar_sesion_chat(self, sesion_id: str) -> bool:
-        with self.sesion() as conexion:
+        with self.sesion_chat() as conexion:
             cursor = conexion.execute("DELETE FROM sesiones_chat WHERE id = ?;", (sesion_id,))
             return cursor.rowcount > 0
 
     def guardar_mensaje_chat(self, msg: MensajeChatRegistro) -> int:
-        with self.sesion() as conexion:
+        compresion, datos_contenido, hash_sha256 = _comprimir_contenido_mensaje(msg.contenido)
+        with self.sesion_chat() as conexion:
             cursor = conexion.execute(
                 """
                 INSERT INTO mensajes_chat (
@@ -832,26 +1036,345 @@ class GestorCache:
                 {
                     "sesion_id": msg.sesion_id,
                     "rol": msg.rol,
-                    "contenido": msg.contenido,
+                    "contenido": "",
                     "tokens_prompt": msg.tokens_prompt,
                     "tokens_generados": msg.tokens_generados,
                     "fuentes_ast_json": msg.fuentes_ast_json,
                     "fecha": msg.fecha,
                 },
             )
+            mensaje_id = int(cursor.lastrowid or 0)
+            conexion.execute(
+                """
+                INSERT INTO contenido_mensajes (mensaje_id, hash_sha256, compresion, datos_contenido)
+                VALUES (?, ?, ?, ?);
+                """,
+                (mensaje_id, hash_sha256, compresion, datos_contenido),
+            )
             # Actualizar fecha de la sesión
             conexion.execute(
                 "UPDATE sesiones_chat SET fecha_actualizacion = ? WHERE id = ?;",
                 (msg.fecha, msg.sesion_id),
             )
-            return cursor.lastrowid or 0
+            return mensaje_id
 
     def obtener_mensajes_sesion(self, sesion_id: str) -> list[dict[str, Any]]:
-        with self.sesion() as conexion:
+        with self.sesion_chat() as conexion:
             cursor = conexion.execute(
-                "SELECT * FROM mensajes_chat WHERE sesion_id = ? ORDER BY id ASC;",
+                """
+                SELECT
+                    m.id,
+                    m.sesion_id,
+                    m.rol,
+                    m.contenido,
+                    m.tokens_prompt,
+                    m.tokens_generados,
+                    m.fuentes_ast_json,
+                    m.fecha,
+                    cm.hash_sha256,
+                    cm.compresion,
+                    cm.datos_contenido
+                FROM mensajes_chat m
+                LEFT JOIN contenido_mensajes cm ON m.id = cm.mensaje_id
+                WHERE m.sesion_id = ?
+                ORDER BY m.id ASC;
+                """,
                 (sesion_id,),
             )
+            mensajes: list[dict[str, Any]] = []
+            for fila in cursor.fetchall():
+                item = dict(fila)
+                datos = item.pop("datos_contenido", None)
+                compresion = item.get("compresion")
+                if datos is not None and compresion:
+                    item["contenido"] = _descomprimir_contenido_mensaje(compresion, bytes(datos))
+                mensajes.append(item)
+            return mensajes
+
+    def obtener_metadatos_mensajes_sesion(self, sesion_id: str) -> list[dict[str, Any]]:
+        with self.sesion_chat() as conexion:
+            cursor = conexion.execute(
+                """
+                SELECT
+                    id,
+                    sesion_id,
+                    rol,
+                    tokens_prompt,
+                    tokens_generados,
+                    fuentes_ast_json,
+                    fecha
+                FROM mensajes_chat
+                WHERE sesion_id = ?
+                ORDER BY id ASC;
+                """,
+                (sesion_id,),
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    # --- Memoria Declarativa Inmutable (Hechos Activos / Superseded) ---
+
+    def registrar_hecho_memoria(self, hecho: HechoMemoriaRegistro) -> int:
+        sujeto = hecho.sujeto.strip()
+        predicado = hecho.predicado.strip()
+        objeto = hecho.objeto.strip()
+        if not sujeto or not predicado or not objeto:
+            raise ValueError("El hecho de memoria requiere sujeto, predicado y objeto no vacíos.")
+
+        fecha = hecho.fecha_creacion or datetime.now(timezone.utc).isoformat()
+        sha = hecho.sha_origen or hashlib.sha256(
+            f"{sujeto}|{predicado}|{objeto}".encode("utf-8")
+        ).hexdigest()
+
+        if hecho.proyecto_id is not None:
+            ambito_sql = "proyecto_id = ?"
+            ambito_params: list[Any] = [hecho.proyecto_id]
+        elif hecho.sesion_id is not None:
+            ambito_sql = "proyecto_id IS NULL AND sesion_id = ?"
+            ambito_params = [hecho.sesion_id]
+        else:
+            ambito_sql = "proyecto_id IS NULL AND sesion_id IS NULL"
+            ambito_params = []
+
+        with self.sesion_chat() as conexion:
+            filas_activas = conexion.execute(
+                f"""
+                SELECT id, objeto FROM hechos_memoria
+                WHERE estado = 'activo'
+                  AND LOWER(sujeto) = LOWER(?)
+                  AND LOWER(predicado) = LOWER(?)
+                  AND {ambito_sql}
+                ORDER BY id ASC;
+                """,
+                (sujeto, predicado, *ambito_params),
+            ).fetchall()
+
+            for fila in filas_activas:
+                if str(fila["objeto"]).strip() == objeto:
+                    return int(fila["id"])
+
+            cursor = conexion.execute(
+                """
+                INSERT INTO hechos_memoria (
+                    proyecto_id, sesion_id, mensaje_id, sujeto, predicado, objeto,
+                    origen_tipo, sha_origen, estado, sustituido_por_id, fecha_creacion, fecha_superseded
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activo', NULL, ?, NULL);
+                """,
+                (
+                    hecho.proyecto_id,
+                    hecho.sesion_id,
+                    hecho.mensaje_id,
+                    sujeto,
+                    predicado,
+                    objeto,
+                    hecho.origen_tipo,
+                    sha,
+                    fecha,
+                ),
+            )
+            nuevo_id = int(cursor.lastrowid or 0)
+
+            for fila in filas_activas:
+                conexion.execute(
+                    """
+                    UPDATE hechos_memoria
+                    SET estado = 'superseded',
+                        sustituido_por_id = ?,
+                        fecha_superseded = ?
+                    WHERE id = ?;
+                    """,
+                    (nuevo_id, fecha, int(fila["id"])),
+                )
+
+            return nuevo_id
+
+    def listar_hechos_memoria(
+        self,
+        proyecto_id: Optional[str] = None,
+        sesion_id: Optional[str] = None,
+        incluir_superseded: bool = False,
+    ) -> list[dict[str, Any]]:
+        condiciones: list[str] = []
+        params: list[Any] = []
+
+        if proyecto_id is not None and sesion_id is not None:
+            condiciones.append("(proyecto_id = ? OR (proyecto_id IS NULL AND sesion_id = ?))")
+            params.extend([proyecto_id, sesion_id])
+        elif proyecto_id is not None:
+            condiciones.append("proyecto_id = ?")
+            params.append(proyecto_id)
+        elif sesion_id is not None:
+            condiciones.append("sesion_id = ?")
+            params.append(sesion_id)
+
+        if not incluir_superseded:
+            condiciones.append("estado = 'activo'")
+
+        where_sql = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
+        with self.sesion_chat() as conexion:
+            cursor = conexion.execute(
+                f"SELECT * FROM hechos_memoria {where_sql} ORDER BY id ASC;",
+                params,
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    def obtener_historial_hecho(
+        self,
+        sujeto: str,
+        predicado: Optional[str] = None,
+        proyecto_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        condiciones = ["LOWER(sujeto) = LOWER(?)"]
+        params: list[Any] = [sujeto.strip()]
+
+        if predicado is not None:
+            condiciones.append("LOWER(predicado) = LOWER(?)")
+            params.append(predicado.strip())
+        if proyecto_id is not None:
+            condiciones.append("proyecto_id = ?")
+            params.append(proyecto_id)
+
+        with self.sesion_chat() as conexion:
+            cursor = conexion.execute(
+                f"SELECT * FROM hechos_memoria WHERE {' AND '.join(condiciones)} ORDER BY id ASC;",
+                params,
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+    # --- Grafo Relacional AST (proyecto_grafo.db + WITH RECURSIVE) ---
+
+    def guardar_grafo_ast_proyecto(
+        self,
+        proyecto_id: str,
+        nodos: list[dict[str, Any]],
+        relaciones: list[tuple[str, str, str]],
+    ) -> None:
+        with self.sesion_proyectos() as conexion:
+            conexion.execute(
+                "DELETE FROM relaciones_ast_grafo WHERE proyecto_id = ?;", (proyecto_id,)
+            )
+            conexion.execute(
+                "DELETE FROM nodos_ast_grafo WHERE proyecto_id = ?;", (proyecto_id,)
+            )
+            if nodos:
+                conexion.executemany(
+                    """
+                    INSERT OR REPLACE INTO nodos_ast_grafo (
+                        id_nodo, proyecto_id, tipo, nombre, ruta_archivo,
+                        linea_inicio, linea_fin, resumen_sintactico
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    [
+                        (
+                            str(n["id_nodo"]),
+                            proyecto_id,
+                            str(n["tipo"]),
+                            str(n["nombre"]),
+                            str(n["ruta_archivo"]),
+                            int(n["linea_inicio"]),
+                            int(n["linea_fin"]),
+                            str(n.get("resumen_sintactico", "")),
+                        )
+                        for n in nodos
+                    ],
+                )
+            if relaciones:
+                conexion.executemany(
+                    """
+                    INSERT OR IGNORE INTO relaciones_ast_grafo (
+                        proyecto_id, origen_id, destino_id, tipo_relacion
+                    )
+                    VALUES (?, ?, ?, ?);
+                    """,
+                    [
+                        (proyecto_id, str(orig), str(dest), str(tipo_rel))
+                        for orig, dest, tipo_rel in relaciones
+                    ],
+                )
+
+    def expandir_dependencias_ast_recursivo(
+        self,
+        proyecto_id: str,
+        nodos_semilla: list[str],
+        max_profundidad: int = 2,
+        incluir_entrantes: bool = True,
+        limite: int = 12,
+    ) -> list[dict[str, Any]]:
+        semillas = list(dict.fromkeys(str(s) for s in nodos_semilla if s))
+        if not semillas:
+            return []
+
+        prof_tope = max(1, min(int(max_profundidad), 5))
+        placeholders = ", ".join("?" for _ in semillas)
+        base_selects = " UNION ALL ".join(
+            "SELECT ? AS nodo_id, 0 AS profundidad, NULL AS tipo_relacion, '|' || ? || '|' AS visitados"
+            for _ in semillas
+        )
+        params: list[Any] = []
+        for s in semillas:
+            params.extend([s, s])
+        params.append(proyecto_id)
+        params.append(prof_tope)
+        params.append(1 if incluir_entrantes else 0)
+        params.append(proyecto_id)
+        params.extend(semillas)
+        params.append(max(1, int(limite)))
+
+        sql = f"""
+            WITH RECURSIVE recorrido(nodo_id, profundidad, tipo_relacion, visitados) AS (
+                {base_selects}
+                UNION ALL
+                SELECT
+                    CASE
+                        WHEN r.origen_id = rec.nodo_id THEN r.destino_id
+                        ELSE r.origen_id
+                    END AS siguiente_id,
+                    rec.profundidad + 1,
+                    r.tipo_relacion,
+                    rec.visitados || (
+                        CASE
+                            WHEN r.origen_id = rec.nodo_id THEN r.destino_id
+                            ELSE r.origen_id
+                        END
+                    ) || '|'
+                FROM recorrido rec
+                JOIN relaciones_ast_grafo r ON r.proyecto_id = ?
+                WHERE rec.profundidad < ?
+                  AND r.tipo_relacion IN ('LLAMA_A', 'HEREDA_DE', 'IMPORTA', 'CONTIENE')
+                  AND (
+                      r.origen_id = rec.nodo_id
+                      OR (? = 1 AND r.destino_id = rec.nodo_id)
+                  )
+                  AND INSTR(
+                      rec.visitados,
+                      '|' || (
+                          CASE WHEN r.origen_id = rec.nodo_id THEN r.destino_id ELSE r.origen_id END
+                      ) || '|'
+                  ) = 0
+            )
+            SELECT
+                n.id_nodo,
+                n.tipo,
+                n.nombre,
+                n.ruta_archivo,
+                n.linea_inicio,
+                n.linea_fin,
+                n.resumen_sintactico,
+                MIN(rec.profundidad) AS profundidad,
+                GROUP_CONCAT(DISTINCT rec.tipo_relacion) AS relaciones
+            FROM recorrido rec
+            JOIN nodos_ast_grafo n
+              ON n.proyecto_id = ? AND n.id_nodo = rec.nodo_id
+            WHERE rec.profundidad >= 1
+              AND n.id_nodo NOT IN ({placeholders})
+            GROUP BY n.id_nodo, n.tipo, n.nombre, n.ruta_archivo, n.linea_inicio, n.linea_fin, n.resumen_sintactico
+            ORDER BY profundidad ASC, n.ruta_archivo ASC, n.linea_inicio ASC
+            LIMIT ?;
+        """
+
+        with self.sesion_proyectos() as conexion:
+            cursor = conexion.execute(sql, params)
             return [dict(fila) for fila in cursor.fetchall()]
 
 

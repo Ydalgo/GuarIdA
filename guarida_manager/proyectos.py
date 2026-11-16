@@ -10,6 +10,7 @@ import json
 import os
 import pickle
 import re
+import struct
 import subprocess
 import time
 import uuid
@@ -31,11 +32,13 @@ from guarida_manager.arbol_nodos import (
 from guarida_manager.cache import (
     DocumentoProyectoRegistro,
     GestorCache,
+    HechoMemoriaRegistro,
     MensajeChatRegistro,
     ProyectoRegistro,
     SesionChatRegistro,
 )
 from guarida_manager.logger import obtener_logger
+from guarida_manager.security import SanitizadorPrivacidad
 
 logger = obtener_logger("proyectos")
 
@@ -50,6 +53,7 @@ EXTENSIONES_HOJAS_CALCULO = {".xlsx", ".ods", ".xls", ".csv", ".tsv"}
 EXTENSIONES_DOCUMENTOS_ANTIGUOS = {".doc"}
 EXTENSIONES_DOCUMENTOS = {".pdf", ".docx", ".odt"} | EXTENSIONES_HOJAS_CALCULO | EXTENSIONES_DOCUMENTOS_ANTIGUOS
 EXTENSIONES_ARCHIVOS_COMPRIMIDOS = {".zip", ".tar", ".gz", ".tgz", ".bz2", ".7z", ".rar"}
+EXTENSIONES_IMAGENES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
 EXTENSIONES_CODIGO_GENERICO = {
     ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java", ".js", ".ts", ".tsx", ".jsx",
@@ -61,6 +65,7 @@ EXTENSIONES_SOPORTADAS = (
     | EXTENSIONES_CODIGO_GENERICO
     | EXTENSIONES_DOCUMENTOS
     | EXTENSIONES_ARCHIVOS_COMPRIMIDOS
+    | EXTENSIONES_IMAGENES
 )
 
 # Archivos que pueden contener secretos: nunca se indexan (evita que acaben en un prompt).
@@ -371,6 +376,137 @@ def extraer_contenido_archivo(ruta: Path) -> str:
     return ruta.read_text(encoding="utf-8", errors="replace")
 
 
+PROMPT_EXTRACCION_VLM = (
+    "Transcribe con precisión el contenido técnico de esta imagen en formato Markdown "
+    "estructurado: extrae todo el código fuente preservando indentación, tablas en Markdown "
+    "y describe las relaciones de arquitectura como nodos y dependencias."
+)
+
+
+class RouterIngestaVisualVLM:
+    """Enruta imágenes y diagramas hacia un modelo Vision-Language local en GGUF (llama.cpp + mmproj)."""
+
+    @staticmethod
+    def _inspeccionar_cabecera_imagen(ruta_imagen: Path) -> tuple[str, Optional[int], Optional[int]]:
+        """Identifica formato y dimensiones leyendo cabeceras binarias sin dependencias externas."""
+        try:
+            datos = ruta_imagen.read_bytes()
+        except OSError:
+            return ruta_imagen.suffix.lstrip(".").upper() or "DESCONOCIDO", None, None
+
+        if len(datos) >= 24 and datos[:8] == b"\x89PNG\r\n\x1a\n":
+            ancho, alto = struct.unpack(">II", datos[16:24])
+            return "PNG", ancho, alto
+        if len(datos) >= 10 and datos[:6] in (b"GIF87a", b"GIF89a"):
+            ancho, alto = struct.unpack("<HH", datos[6:10])
+            return "GIF", ancho, alto
+        if len(datos) >= 26 and datos[:2] == b"BM":
+            ancho, alto = struct.unpack("<II", datos[18:26])
+            return "BMP", ancho, alto
+        if len(datos) >= 12 and datos[:4] == b"RIFF" and datos[8:12] == b"WEBP":
+            return "WEBP", None, None
+        if len(datos) >= 4 and datos[:2] == b"\xff\xd8":
+            idx = 2
+            while idx + 9 < len(datos):
+                if datos[idx] != 0xFF:
+                    break
+                marcador = datos[idx + 1]
+                if marcador in (0xC0, 0xC1, 0xC2, 0xC3):
+                    alto, ancho = struct.unpack(">HH", datos[idx + 5 : idx + 9])
+                    return "JPEG", ancho, alto
+                if marcador in (0xD8, 0xD9):
+                    idx += 2
+                    continue
+                if idx + 4 > len(datos):
+                    break
+                long_seg = struct.unpack(">H", datos[idx + 2 : idx + 4])[0]
+                if long_seg < 2:
+                    break
+                idx += 2 + long_seg
+            return "JPEG", None, None
+
+        return ruta_imagen.suffix.lstrip(".").upper() or "IMAGEN", None, None
+
+    @classmethod
+    def transcribir_imagen(
+        cls,
+        ruta_imagen: Path,
+        funcion_vlm: Optional[Callable[[Path, str], str]] = None,
+        binario_vlm: Optional[Path] = None,
+        modelo_gguf: Optional[Path] = None,
+        mmproj_gguf: Optional[Path] = None,
+        prompt: str = PROMPT_EXTRACCION_VLM,
+    ) -> str:
+        """Transcribe una imagen vía función VLM, binario llama.cpp + mmproj o fallback de metadatos."""
+        if funcion_vlm is not None:
+            try:
+                salida = funcion_vlm(ruta_imagen, prompt)
+                if salida and salida.strip():
+                    return f"# Transcripción Visual VLM: {ruta_imagen.name}\n\n{salida.strip()}"
+            except Exception as e_vlm:
+                logger.warning(f"Fallo en función VLM para '{ruta_imagen.name}': {e_vlm}")
+
+        if (
+            binario_vlm is not None
+            and modelo_gguf is not None
+            and mmproj_gguf is not None
+            and binario_vlm.exists()
+            and modelo_gguf.exists()
+            and mmproj_gguf.exists()
+        ):
+            try:
+                cmd = [
+                    str(binario_vlm),
+                    "-m",
+                    str(modelo_gguf),
+                    "--mmproj",
+                    str(mmproj_gguf),
+                    "--image",
+                    str(ruta_imagen),
+                    "-p",
+                    prompt,
+                    "-n",
+                    "512",
+                    "--temp",
+                    "0.1",
+                ]
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=120,
+                    check=False,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    return (
+                        f"# Transcripción Visual VLM ({modelo_gguf.name}): "
+                        f"{ruta_imagen.name}\n\n{proc.stdout.strip()}"
+                    )
+            except Exception as e_proc:
+                logger.warning(f"Fallo ejecutando VLM llama.cpp en '{ruta_imagen.name}': {e_proc}")
+
+        formato, ancho, alto = cls._inspeccionar_cabecera_imagen(ruta_imagen)
+        try:
+            raw = ruta_imagen.read_bytes()
+            tam_bytes = len(raw)
+            sha = hashlib.sha256(raw).hexdigest()
+        except OSError:
+            tam_bytes = 0
+            sha = ""
+        dims = f"{ancho}x{alto} px" if ancho and alto else "desconocidas"
+        return (
+            f"# Recurso Visual (Pendiente de VLM): {ruta_imagen.name}\n\n"
+            f"- Archivo: {ruta_imagen.name}\n"
+            f"- Formato: {formato}\n"
+            f"- Dimensiones: {dims}\n"
+            f"- Tamaño: {tam_bytes} bytes\n"
+            f"- SHA-256: {sha}\n"
+            "- Estado: Indexado por metadatos; requiere modelo VLM GGUF + mmproj para transcripción semántica."
+        )
+
+
 @dataclass
 class ChunkDocumento:
     """Fragmento de texto semántico para documentos planos o markdown."""
@@ -556,19 +692,30 @@ def _obtener_hash_git_limpio(ruta: Path) -> Optional[str]:
 class GestorProyectos:
     """Controlador principal de proyectos, indexación local de código/documentos y RAG offline."""
 
-    def __init__(self, gestor_cache: Optional[GestorCache] = None) -> None:
+    def __init__(
+        self,
+        gestor_cache: Optional[GestorCache] = None,
+        modo_privacidad: str = "estandar",
+        funcion_vlm: Optional[Callable[[Path, str], str]] = None,
+    ) -> None:
         self.cache = gestor_cache or GestorCache()
         ruta_db = getattr(self.cache, "ruta_db", None)
         if isinstance(ruta_db, (str, Path)):
             self.dir_cache_snapshots = Path(ruta_db).parent / "cache_proyectos"
         else:
             self.dir_cache_snapshots = Path.home() / ".guarida" / "cache_proyectos"
+        self.sanitizador = SanitizadorPrivacidad(modo=modo_privacidad)
+        self.funcion_vlm = funcion_vlm
         # Árboles AST cargados en memoria por proyecto {proyecto_id: ArbolNodosCodigo}
         self._arboles_codigo: dict[str, ArbolNodosCodigo] = {}
         # Chunks de documentos texto por proyecto {proyecto_id: list[ChunkDocumento]}
         self._chunks_texto: dict[str, list[ChunkDocumento]] = {}
         # Motores híbridos HNSW/Matricial + BM25 en memoria RAM {proyecto_id: MotorBusquedaHibrida}
         self._motores_hibridos: dict[str, Any] = {}
+
+    def configurar_modo_privacidad(self, modo: str) -> None:
+        """Conmuta el modo de privacidad ('estandar' o 'rgpd_estricto')."""
+        self.sanitizador.configurar_modo(modo)
 
     def crear_proyecto(
         self,
@@ -619,6 +766,7 @@ class GestorProyectos:
         extensiones: Optional[set[str]] = None,
         callback_progreso: Optional[Callable[[str, float], None]] = None,
         modelo_emb_id: str = "",
+        funcion_vlm: Optional[Callable[[Path, str], str]] = None,
     ) -> dict[str, Any]:
         """Escanea el proyecto, extrae nodos AST/fragmentos y los indexa de forma incremental.
 
@@ -636,14 +784,19 @@ class GestorProyectos:
         slug_emb = re.sub(r"[^\w\-.]", "_", modelo_emb_id or "default")
         ruta_snapshot = self.dir_cache_snapshots / f"{proyecto_id}_{slug_emb}.pkl"
 
+        vlm_activo = funcion_vlm or self.funcion_vlm
+
         # Optimización O(1): Verificación instantánea por Git Tree / Commit Hash (sin escanear archivos)
         git_commit_hash = _obtener_hash_git_limpio(ruta_base)
-        if git_commit_hash:
+        if git_commit_hash and vlm_activo is None:
             try:
                 if ruta_snapshot.exists():
                     with open(ruta_snapshot, "rb") as f_snap:
                         datos_snap = pickle.load(f_snap)
-                    if datos_snap.get("git_commit_hash") == git_commit_hash:
+                    if (
+                        datos_snap.get("git_commit_hash") == git_commit_hash
+                        and datos_snap.get("modo_privacidad", "estandar") == self.sanitizador.modo
+                    ):
                         arbol_snap = datos_snap.get("arbol", ArbolNodosCodigo())
                         chunks_snap = datos_snap.get("chunks_docs", [])
                         motor_snap = datos_snap.get("motor_hibrido")
@@ -688,7 +841,7 @@ class GestorProyectos:
                         continue
                     limite_bytes = (
                         TAMANO_MAX_DOCUMENTO_BYTES
-                        if p.suffix.lower() in EXTENSIONES_DOCUMENTOS
+                        if p.suffix.lower() in (EXTENSIONES_DOCUMENTOS | EXTENSIONES_IMAGENES)
                         else TAMANO_MAX_ARCHIVO_BYTES
                     )
                     if p.stat().st_size > limite_bytes:
@@ -704,6 +857,8 @@ class GestorProyectos:
             return {
                 "total_archivos": 0, "nodos_ast": 0, "chunks_texto": 0, "archivos_procesados": 0,
                 "archivos_sin_cambios": 0, "omitidos_seguridad": omitidos_seguridad,
+                "redacciones_privacidad": 0, "relaciones_ast": 0,
+                "modo_privacidad": self.sanitizador.modo,
                 "snapshot_reutilizado": False,
             }
 
@@ -716,8 +871,10 @@ class GestorProyectos:
             except OSError:
                 continue
         firma_items.sort()
+        tag_vlm = "vlm_custom" if vlm_activo is not None else "vlm_auto"
         firma_hash = hashlib.sha256(
-            json.dumps(firma_items).encode("utf-8") + f":{modelo_emb_id}".encode("utf-8")
+            json.dumps(firma_items).encode("utf-8")
+            + f":{modelo_emb_id}:{self.sanitizador.modo}:{tag_vlm}".encode("utf-8")
         ).hexdigest()
 
         slug_emb = re.sub(r"[^\w\-.]", "_", modelo_emb_id or "default")
@@ -756,6 +913,7 @@ class GestorProyectos:
         chunks_totales = 0
         archivos_procesados = 0
         archivos_sin_cambios = 0
+        redacciones_privacidad = 0
 
         hashes_previos = self.cache.obtener_documentos_hash(proyecto_id)
         self.cache.eliminar_documentos_proyecto(proyecto_id)
@@ -775,6 +933,10 @@ class GestorProyectos:
                 entradas_comp = extraer_archivos_comprimidos(archivo)
                 for sub_nom, sub_contenido in entradas_comp:
                     sub_ruta_rel = f"{ruta_rel}::{sub_nom}"
+                    if self.sanitizador.necesita_sanitizacion(sub_contenido):
+                        res_san = self.sanitizador.sanitizar_texto(sub_contenido, origen=sub_ruta_rel)
+                        sub_contenido = res_san.texto_sanitizado
+                        redacciones_privacidad += res_san.total_redacciones
                     sub_sha = hashlib.sha256(sub_contenido.encode("utf-8")).hexdigest()
                     if hashes_previos.get(sub_ruta_rel) == sub_sha:
                         archivos_sin_cambios += 1
@@ -797,15 +959,28 @@ class GestorProyectos:
                 continue
 
             try:
-                contenido = extraer_contenido_archivo(archivo)
+                if sufijo in EXTENSIONES_IMAGENES:
+                    contenido = RouterIngestaVisualVLM.transcribir_imagen(
+                        archivo, funcion_vlm=vlm_activo
+                    )
+                    sha256_archivo = hashlib.sha256(archivo.read_bytes()).hexdigest()
+                else:
+                    contenido = extraer_contenido_archivo(archivo)
+                    sha256_archivo = hashlib.sha256(contenido.encode("utf-8")).hexdigest()
             except Exception:
                 continue
 
-            sha256_archivo = hashlib.sha256(contenido.encode("utf-8")).hexdigest()
+            if self.sanitizador.necesita_sanitizacion(contenido):
+                res_san = self.sanitizador.sanitizar_texto(contenido, origen=ruta_rel)
+                contenido = res_san.texto_sanitizado
+                redacciones_privacidad += res_san.total_redacciones
+
             if hashes_previos.get(ruta_rel) == sha256_archivo:
                 archivos_sin_cambios += 1
             if sufijo == ".py":
                 tipo_doc = "codigo_python"
+            elif sufijo in EXTENSIONES_IMAGENES:
+                tipo_doc = "imagen_vlm"
             elif sufijo in EXTENSIONES_CODIGO_GENERICO:
                 tipo_doc = "codigo_generico"
             elif sufijo in EXTENSIONES_HOJAS_CALCULO:
@@ -903,6 +1078,29 @@ class GestorProyectos:
         self._arboles_codigo[proyecto_id] = arbol
         self._chunks_texto[proyecto_id] = chunks_docs
 
+        relaciones_ast = arbol.resolver_enlaces_simbolos()
+        try:
+            nodos_para_db = [
+                {
+                    "id_nodo": n.id_nodo,
+                    "tipo": n.tipo.value,
+                    "nombre": n.nombre,
+                    "ruta_archivo": n.ruta_archivo,
+                    "linea_inicio": n.linea_inicio,
+                    "linea_fin": n.linea_fin,
+                    "resumen_sintactico": n.resumen_sintactico,
+                }
+                for n in arbol.nodos.values()
+            ]
+            relaciones_para_db = [
+                (r.origen_id, r.destino_id, r.tipo_relacion) for r in relaciones_ast
+            ]
+            self.cache.guardar_grafo_ast_proyecto(
+                proyecto_id, nodos_para_db, relaciones_para_db
+            )
+        except Exception as e_grafo:
+            logger.debug(f"No se pudo persistir grafo AST en SQLite: {e_grafo}")
+
         try:
             from guarida_manager.indice_hibrido import MotorBusquedaHibrida
 
@@ -929,7 +1127,10 @@ class GestorProyectos:
             "archivos_procesados": archivos_procesados,
             "archivos_sin_cambios": archivos_sin_cambios,
             "omitidos_seguridad": omitidos_seguridad,
+            "redacciones_privacidad": redacciones_privacidad,
+            "modo_privacidad": self.sanitizador.modo,
             "nodos_ast": nodos_ast_totales,
+            "relaciones_ast": len(relaciones_ast),
             "chunks_texto": chunks_totales,
             "embeddings_calculados": embeddings_calculados,
             "embeddings_reutilizados": embeddings_reutilizados,
@@ -944,6 +1145,7 @@ class GestorProyectos:
                     {
                         "firma_hash": firma_hash,
                         "git_commit_hash": git_commit_hash,
+                        "modo_privacidad": self.sanitizador.modo,
                         "arbol": arbol,
                         "chunks_docs": chunks_docs,
                         "motor_hibrido": self._motores_hibridos.get(proyecto_id),
@@ -1091,6 +1293,38 @@ class GestorProyectos:
                     f"{codigo_comp}"
                 )
 
+            try:
+                semillas_ast = [n.id_nodo for n, _ in candidatos_ast]
+                deps_grafo = self.cache.expandir_dependencias_ast_recursivo(
+                    proyecto_id, semillas_ast, max_profundidad=2, limite=8
+                )
+                if isinstance(deps_grafo, list) and deps_grafo:
+                    resumen_deps = [
+                        {
+                            "tipo": "ast_dependencia_grafo",
+                            "archivo": dep["ruta_archivo"],
+                            "lineas": f"{dep['linea_inicio']}-{dep['linea_fin']}",
+                            "nombre": dep["nombre"],
+                            "relacion": dep.get("relaciones") or "",
+                            "profundidad": dep.get("profundidad", 1),
+                        }
+                        for dep in deps_grafo
+                    ]
+                    if fuentes:
+                        fuentes[0]["dependencias_grafo"] = resumen_deps
+                    lineas_dep = ["=== DEPENDENCIAS DEL GRAFO AST (MULTIHOP) ==="]
+                    for dep in deps_grafo:
+                        resumen_dep = dep.get("resumen_sintactico") or dep["nombre"]
+                        lineas_dep.append(
+                            f"- [{dep['tipo']}] {dep['nombre']} "
+                            f"({dep['ruta_archivo']}:{dep['linea_inicio']}-{dep['linea_fin']}) "
+                            f"| Relación: {dep.get('relaciones')} (salto {dep.get('profundidad')}) "
+                            f"-> {resumen_dep}"
+                        )
+                    bloques_contexto.append("\n".join(lineas_dep))
+            except Exception as e_dep:
+                logger.debug(f"Fallo al expandir dependencias de grafo AST: {e_dep}")
+
         # Formatear contexto de documentación
         if candidatos_chunks:
             bloques_contexto.append("\n=== DOCUMENTOS Y ESPECIFICACIONES ===")
@@ -1163,3 +1397,58 @@ class GestorProyectos:
 
     def obtener_historial_sesion(self, sesion_id: str) -> list[dict[str, Any]]:
         return self.cache.obtener_mensajes_sesion(sesion_id)
+
+    # --- Memoria Declarativa Inmutable (Hechos Activos / Superseded) ---
+
+    def registrar_hecho(
+        self,
+        sujeto: str,
+        predicado: str,
+        objeto: str,
+        proyecto_id: Optional[str] = None,
+        sesion_id: Optional[str] = None,
+        mensaje_id: Optional[int] = None,
+        origen_tipo: str = "chat",
+        sha_origen: Optional[str] = None,
+    ) -> int:
+        hecho = HechoMemoriaRegistro(
+            sujeto=sujeto,
+            predicado=predicado,
+            objeto=objeto,
+            proyecto_id=proyecto_id,
+            sesion_id=sesion_id,
+            mensaje_id=mensaje_id,
+            origen_tipo=origen_tipo,
+            sha_origen=sha_origen,
+        )
+        return self.cache.registrar_hecho_memoria(hecho)
+
+    def obtener_hechos_activos(
+        self, proyecto_id: Optional[str] = None, sesion_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        res = self.cache.listar_hechos_memoria(
+            proyecto_id=proyecto_id, sesion_id=sesion_id, incluir_superseded=False
+        )
+        return res if isinstance(res, list) else []
+
+    def obtener_auditoria_hechos(
+        self, proyecto_id: Optional[str] = None, sesion_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        res = self.cache.listar_hechos_memoria(
+            proyecto_id=proyecto_id, sesion_id=sesion_id, incluir_superseded=True
+        )
+        return res if isinstance(res, list) else []
+
+    def formatear_contexto_memoria_canonica(
+        self, proyecto_id: Optional[str] = None, sesion_id: Optional[str] = None
+    ) -> str:
+        hechos = self.obtener_hechos_activos(proyecto_id=proyecto_id, sesion_id=sesion_id)
+        if not hechos:
+            return ""
+        lineas = ["[Memoria Declarativa Activa (Hechos Verificados)]:"]
+        for h in hechos:
+            sha_corta = str(h.get("sha_origen", ""))[:8]
+            lineas.append(
+                f"- {h['sujeto']} | {h['predicado']} | {h['objeto']} [id=#{h['id']}, sha={sha_corta}]"
+            )
+        return "\n".join(lineas)

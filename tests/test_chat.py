@@ -1,6 +1,7 @@
 """Pruebas unitarias para el módulo de chat interactivo por terminal."""
 
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,7 @@ from guarida_manager.cache import GestorCache
 from guarida_manager.chat import (
     calcular_metricas_interaccion,
     ejecutar_chat_terminal,
+    extraer_hechos_declarativos,
     medir_tokens_mensaje,
     mostrar_metricas_turno,
     mostrar_parejas_recomendadas,
@@ -438,6 +440,66 @@ class TestChatTerminal(unittest.TestCase):
         self.assertIn("GPU:                                  Intel Iris Xe [Integrada / APU]", texto)
         self.assertIn("Disco:                                200.0 / 500.0 GB (40.0 %) [300.0 GB libres]", texto)
         self.assertIn("Temperatura Silicio:                  55.0 °C", texto)
+
+    def test_extraer_hechos_declarativos(self):
+        hechos_exp = extraer_hechos_declarativos("[HECHO: puerto_api | es | 8083]")
+        self.assertEqual(hechos_exp, [("puerto_api", "es", "8083")])
+
+        hechos_nat = extraer_hechos_declarativos("Recuerda que el motor usa SQLite WAL.")
+        self.assertEqual(hechos_nat, [("el motor", "usa", "SQLite WAL")])
+
+    def test_chat_comandos_remember_recall_e_inyeccion_superseded(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_real = GestorCache(Path(tmp_dir) / "chat_memoria.db")
+            salidas = []
+            entradas = iter([
+                "/remember puerto_api | es | 8080",
+                "/remember puerto_api | es | 9000",
+                "/recall",
+                "/recall all",
+                "¿Qué puerto usamos?",
+                "/quit",
+            ])
+
+            mock_srv = MagicMock()
+            mock_srv.esta_activo.return_value = True
+            mock_srv.obtener_estado.return_value = {"activo": True, "modelo": "qwen2.5-3b-chat-q4"}
+            mock_cli = MagicMock()
+            mock_cli.esta_disponible.return_value = True
+            mock_cli.base_url = "http://127.0.0.1:8083"
+            mock_cli.tokenizar.return_value = [1, 2, 3, 4]
+            mock_cli.completar_chat.return_value = {
+                "choices": [{"message": {"role": "assistant", "content": "Usamos el puerto 9000."}}],
+                "usage": {"prompt_tokens": 30, "completion_tokens": 5, "total_tokens": 35},
+                "timings": {"predicted_per_second": 25.0},
+            }
+
+            ejecutar_chat_terminal(
+                gestor_cache=cache_real,
+                gestor_server=mock_srv,
+                cliente=mock_cli,
+                modelo_seleccionado="qwen2.5-3b-chat-q4",
+                input_func=lambda _: next(entradas),
+                print_func=salidas.append,
+            )
+
+            texto_salida = "\n".join(salidas)
+            self.assertIn("Hecho registrado en memoria inmutable", texto_salida)
+            self.assertIn("[MEMORIA DECLARATIVA ACTIVA] (1 hechos):", texto_salida)
+            self.assertIn("[AUDITORÍA COMPLETA DE MEMORIA] (2 hechos):", texto_salida)
+            self.assertIn("[SUPERSEDED -> #2]", texto_salida)
+
+            mock_cli.completar_chat.assert_called_once()
+            mensajes_enviados = mock_cli.completar_chat.call_args.kwargs["mensajes"]
+            prompt_usuario = mensajes_enviados[-1]["content"]
+            self.assertIn("[Memoria Declarativa Activa (Hechos Verificados)]:", prompt_usuario)
+            self.assertIn("puerto_api | es | 9000", prompt_usuario)
+            self.assertNotIn("puerto_api | es | 8080", prompt_usuario)
+
+            sesiones = cache_real.listar_sesiones_chat()
+            self.assertEqual(len(sesiones), 1)
+            msgs_db = cache_real.obtener_mensajes_sesion(sesiones[0]["id"])
+            self.assertEqual(msgs_db[0]["contenido"], "¿Qué puerto usamos?")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@ Permite probar modelos manualmente tras seleccionar entre parejas recomendadas s
 y los datos de afinamiento y benchmark disponibles en el sistema.
 """
 
+import hashlib
+import re
 import secrets
 import time
 from pathlib import Path
@@ -20,6 +22,39 @@ from guarida_manager.proyectos import GestorProyectos
 from guarida_manager import DIRECTORIO_LOGS, menu_actions
 
 logger = obtener_logger("chat")
+
+_RE_HECHO_EXPLICITO = re.compile(
+    r"(?:\[\s*)?HECHO\s*:\s*([^|\r\n]+?)\s*\|\s*([^|\r\n]+?)\s*\|\s*([^\]\r\n]+?)\s*(?:\]|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_RE_HECHO_NATURAL = re.compile(
+    r"(?i)\brecuerda\s+que\s+(.+?)\s+"
+    r"(es|usa|utiliza|requiere|vale|est[aá]\s+en|apunta\s+a|depende\s+de)\s+"
+    r"([^.\r\n;]+)",
+)
+
+
+def extraer_hechos_declarativos(texto: str) -> list[tuple[str, str, str]]:
+    """Extrae tripletas (sujeto, predicado, objeto) desde marcadores explícitos o fraseo declarativo."""
+    if not texto or not texto.strip():
+        return []
+
+    hechos: list[tuple[str, str, str]] = []
+    vistos: set[tuple[str, str, str]] = set()
+
+    for patron in (_RE_HECHO_EXPLICITO, _RE_HECHO_NATURAL):
+        for match in patron.finditer(texto):
+            sujeto = " ".join(match.group(1).split()).strip(" .,:;")
+            predicado = " ".join(match.group(2).split()).strip(" .,:;")
+            objeto = " ".join(match.group(3).split()).strip(" .,:;")
+            if not sujeto or not predicado or not objeto:
+                continue
+            clave = (sujeto.lower(), predicado.lower(), objeto)
+            if clave not in vistos:
+                vistos.add(clave)
+                hechos.append((sujeto, predicado, objeto))
+
+    return hechos
 
 
 class ClienteTensoresChat:
@@ -806,6 +841,7 @@ def ejecutar_chat_terminal(
     print_func(f"  Servidor HTTP Local:            {cli.base_url}")
     print_func("  " + "-" * 76)
     print_func("  [AVISO]: Para salir del chat escribe el comando '/quit'. Usa '/ficheros' para ver los archivos.")
+    print_func("           Memoria y privacidad: '/remember sujeto | predicado | objeto' | '/recall [all]' | '/rgpd [on|off|status]'")
     print_func("=" * 80)
 
     prompt_sistema = (
@@ -906,6 +942,100 @@ def ejecutar_chat_terminal(
                     print_func("\n[!] No hay ningún proyecto activo asociado a esta sesión de chat.")
                 continue
 
+            msg_lower = msg.lower()
+            if msg_lower.startswith("/remember") or msg_lower.startswith("/recordar"):
+                cuerpo = msg.split(None, 1)[1].strip() if len(msg.split(None, 1)) > 1 else ""
+                partes = [p.strip() for p in cuerpo.split("|")]
+                if len(partes) == 3 and all(partes):
+                    try:
+                        hecho_id = gestor_proy.registrar_hecho(
+                            partes[0],
+                            partes[1],
+                            partes[2],
+                            proyecto_id=proyecto_id,
+                            sesion_id=sesion_id_activa,
+                            origen_tipo="comando",
+                        )
+                        print_func(
+                            f"\n[OK] Hecho registrado en memoria inmutable (#{hecho_id}): "
+                            f"{partes[0]} | {partes[1]} | {partes[2]}"
+                        )
+                    except Exception as e_mem:
+                        print_func(f"\n[!] Error al registrar hecho en memoria: {e_mem}")
+                else:
+                    print_func("\n[!] Uso: /remember <sujeto> | <predicado> | <objeto>")
+                continue
+
+            if (
+                msg_lower == "/recall"
+                or msg_lower.startswith("/recall ")
+                or msg_lower == "/memoria"
+                or msg_lower.startswith("/memoria ")
+            ):
+                tokens_cmd = msg_lower.split()
+                incluir_todo = len(tokens_cmd) > 1 and tokens_cmd[1] in (
+                    "all",
+                    "todo",
+                    "historico",
+                    "histórico",
+                )
+                hechos = (
+                    gestor_proy.obtener_auditoria_hechos(
+                        proyecto_id=proyecto_id, sesion_id=sesion_id_activa
+                    )
+                    if incluir_todo
+                    else gestor_proy.obtener_hechos_activos(
+                        proyecto_id=proyecto_id, sesion_id=sesion_id_activa
+                    )
+                )
+                if not hechos:
+                    print_func("\n[!] No hay hechos registrados en la memoria de esta sesión/proyecto.")
+                else:
+                    titulo_mem = (
+                        "AUDITORÍA COMPLETA DE MEMORIA"
+                        if incluir_todo
+                        else "MEMORIA DECLARATIVA ACTIVA"
+                    )
+                    print_func(f"\n[{titulo_mem}] ({len(hechos)} hechos):")
+                    for h in hechos:
+                        estado_h = h.get("estado", "activo")
+                        if estado_h == "superseded":
+                            etiqueta = f"[SUPERSEDED -> #{h.get('sustituido_por_id')}]"
+                        else:
+                            etiqueta = "[ACTIVO]"
+                        sha_corta = str(h.get("sha_origen", ""))[:8]
+                        print_func(
+                            f"  #{h['id']} {etiqueta:<22} {h['sujeto']} | {h['predicado']} | {h['objeto']} (sha:{sha_corta})"
+                        )
+                continue
+
+            if msg_lower == "/rgpd" or msg_lower.startswith("/rgpd "):
+                arg_rgpd = msg_lower.split(None, 1)[1].strip() if len(msg_lower.split(None, 1)) > 1 else "status"
+                if arg_rgpd in ("on", "estricto", "rgpd_estricto", "1", "true"):
+                    gestor_proy.configurar_modo_privacidad("rgpd_estricto")
+                    print_func("\n[OK] Modo de privacidad: 'rgpd_estricto' (anonimización irreversible + auditoría HMAC).")
+                elif arg_rgpd in ("off", "estandar", "estándar", "0", "false"):
+                    gestor_proy.configurar_modo_privacidad("estandar")
+                    print_func("\n[OK] Modo de privacidad: 'estandar' (bloques <private> y secretos explícitos).")
+                else:
+                    n_ev = len(gestor_proy.sanitizador.historial_auditoria)
+                    print_func(
+                        f"\n[Privacidad] Modo activo: '{gestor_proy.sanitizador.modo}' | "
+                        f"Eventos HMAC registrados en sesión: {n_ev}"
+                    )
+                continue
+
+            if gestor_proy.sanitizador.necesita_sanitizacion(msg):
+                res_san_msg = gestor_proy.sanitizador.sanitizar_texto(
+                    msg, origen=f"chat:{sesion_id_activa}"
+                )
+                if res_san_msg.total_redacciones > 0:
+                    msg = res_san_msg.texto_sanitizado
+                    print_func(
+                        f"\n[Privacidad ({res_san_msg.modo})]: "
+                        f"{res_san_msg.total_redacciones} dato(s) redactado(s) con log HMAC."
+                    )
+
             # Búsqueda semántica híbrida si hay proyecto activo (RAG Local)
             fuentes_turno: list[dict[str, Any]] = []
             prompt_usuario_final = msg
@@ -955,6 +1085,29 @@ def ejecutar_chat_terminal(
                 except Exception as e_rag:
                     logger.warning(f"Fallo al recuperar contexto RAG: {e_rag}", exc_info=True)
                     print_func(f"[!] No se pudo recuperar contexto del repositorio: {e_rag}")
+
+            # Captura e inyección de memoria declarativa inmutable (hechos activos)
+            try:
+                hechos_detectados = extraer_hechos_declarativos(msg)
+                if hechos_detectados:
+                    sha_msg = hashlib.sha256(msg.encode("utf-8")).hexdigest()
+                    for subj, pred, obj in hechos_detectados:
+                        gestor_proy.registrar_hecho(
+                            subj,
+                            pred,
+                            obj,
+                            proyecto_id=proyecto_id,
+                            sesion_id=sesion_id_activa,
+                            origen_tipo="chat",
+                            sha_origen=sha_msg,
+                        )
+                ctx_memoria = gestor_proy.formatear_contexto_memoria_canonica(
+                    proyecto_id=proyecto_id, sesion_id=sesion_id_activa
+                )
+                if ctx_memoria:
+                    prompt_usuario_final = f"{prompt_usuario_final}\n\n{ctx_memoria}"
+            except Exception as e_mem_ctx:
+                logger.debug(f"Fallo al procesar memoria declarativa en turno: {e_mem_ctx}")
 
             # Medición de tokens del mensaje escrito por el usuario (sin el contexto recuperado)
             tokens_msg = medir_tokens_mensaje(cli, msg)
