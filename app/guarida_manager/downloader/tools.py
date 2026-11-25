@@ -239,6 +239,7 @@ class GestorHerramientasBunker:
                 url=url,
                 ruta_destino=ruta_temporal,
                 sha256_esperado=sha256_esperado,
+                permitir_inseguro=(sha256_esperado is None),
                 callback_progreso=callback_progreso,
                 user_agent="GuarIdA-Tools-Installer/1.0",
             )

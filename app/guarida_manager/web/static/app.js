@@ -4,12 +4,14 @@
   const state = {
     status: null,
     models: [],
+    tools: [],
     projects: [],
     sessions: [],
     memory: [],
     activeProjectId: null,
     activeSessionId: null,
     catalogFilter: "all",
+    downloadsModelFilter: "all",
     sending: false,
     astData: { nodos_ast: [], relaciones_ast: [], expansion: [] },
   };
@@ -542,6 +544,126 @@
     const data = await api("/api/models");
     state.models = data.modelos || [];
     renderCatalogTable();
+    renderDownloadsModelsTable();
+  }
+
+  async function loadTools() {
+    try {
+      const data = await api("/api/tools");
+      state.tools = data.herramientas || [];
+      renderToolsTable();
+      updateMissingToolsBanner();
+    } catch (err) {
+      showToast(`Error cargando herramientas: ${err.message}`, "err");
+    }
+  }
+
+  function updateMissingToolsBanner() {
+    const faltaCritica = state.tools.some((t) => t.es_critica && !t.instalada);
+    $("missing-tools-banner")?.classList.toggle("hidden", !faltaCritica);
+    $("rail-downloads-badge")?.classList.toggle("hidden", !faltaCritica);
+    $("tab-downloads-badge")?.classList.toggle("hidden", !faltaCritica);
+  }
+
+  function renderToolsTable() {
+    const tbody = $("tools-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = state.tools
+      .map((t) => {
+        const prioBadge = t.es_critica
+          ? `<span class="badge badge-cyan">Esencial</span>`
+          : `<span class="badge badge-muted">Opcional</span>`;
+        const estadoBadge = t.instalada
+          ? `<span class="badge badge-emerald">Instalado</span>`
+          : `<span class="badge badge-muted">No instalado</span>`;
+        const verRuta = t.instalada
+          ? `<div>${esc(t.version || "Disponible")}</div><div class="muted-text"><code>${esc(t.ruta || "")}</code></div>`
+          : `<div class="muted-text">${esc(t.descripcion)}</div>`;
+        const accionBtn = t.instalada
+          ? `<button class="btn btn-ghost btn-xs btn-dl-tool" data-tool="${esc(t.id)}" type="button">Reinstalar</button>`
+          : `<button class="btn btn-primary btn-xs btn-dl-tool" data-tool="${esc(t.id)}" type="button">Descargar</button>`;
+        return `
+          <tr>
+            <td><strong>${esc(t.nombre)}</strong><div class="muted-text">${esc(t.id)}</div></td>
+            <td>${prioBadge}</td>
+            <td>${verRuta}</td>
+            <td>${estadoBadge}</td>
+            <td>${accionBtn}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    tbody.querySelectorAll(".btn-dl-tool").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const tid = btn.getAttribute("data-tool");
+        btn.disabled = true;
+        showToast(`Descargando '${tid}'...`, "info");
+        try {
+          const res = await api("/api/tools/download", {
+            method: "POST",
+            body: JSON.stringify({ herramienta_id: tid }),
+          });
+          state.tools = res.herramientas || [];
+          renderToolsTable();
+          updateMissingToolsBanner();
+          showToast(`Herramienta '${tid}' lista`, "ok");
+        } catch (err) {
+          showToast(err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  function renderDownloadsModelsTable() {
+    const tbody = $("downloads-models-tbody");
+    if (!tbody) return;
+    const f = state.downloadsModelFilter;
+    const filtrados = state.models.filter((m) => {
+      if (f === "all") return true;
+      if (f === "pending") return !m.en_disco;
+      if (f === "local") return m.en_disco;
+      return m.categoria === f;
+    });
+
+    tbody.innerHTML = filtrados
+      .map((m) => {
+        const estadoBadge = m.en_disco
+          ? `<span class="badge badge-emerald">En disco (${m.tamano_mb || "?"} MB)</span>`
+          : `<span class="badge badge-muted">Pendiente</span>`;
+        const dlBtn = m.en_disco
+          ? `<button class="btn btn-ghost btn-xs btn-dl-model-tab" data-model="${esc(m.id)}" type="button">Verificar</button>`
+          : `<button class="btn btn-primary btn-xs btn-dl-model-tab" data-model="${esc(m.id)}" type="button">Descargar</button>`;
+        return `
+          <tr>
+            <td><strong>${esc(m.id)}</strong><div class="muted-text">${esc(m.nombre_legible)}</div></td>
+            <td><span class="badge">${esc(m.categoria || "general")}</span></td>
+            <td>${Number(m.tamano_gb).toFixed(2)} GB</td>
+            <td>${estadoBadge}</td>
+            <td>${dlBtn}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    tbody.querySelectorAll(".btn-dl-model-tab").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const mid = btn.getAttribute("data-model");
+        btn.disabled = true;
+        showToast(`Descargando modelo '${mid}'...`, "info");
+        try {
+          await api("/api/models/download", { method: "POST", body: JSON.stringify({ modelo_id: mid }) });
+          showToast(`Modelo '${mid}' listo en disco`, "ok");
+          await Promise.all([loadCatalog(), refreshStatus()]);
+        } catch (err) {
+          showToast(err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
   function renderCatalogTable() {
@@ -698,8 +820,12 @@
 
       await Promise.all([loadSessions(), loadMemory(), refreshStatus()]);
     } catch (err) {
-      appendChatMessage("assistant", `**[Error de inferencia]:** ${err.message}`, [], null);
-      showToast(err.message, "err");
+      const msgErr =
+        err && /failed to fetch/i.test(String(err.message || ""))
+          ? "Sin conexión con el servidor web de GuarIdA. Comprueba que Iniciar_Web.bat sigue abierto y recarga la página."
+          : err.message;
+      appendChatMessage("assistant", `**[Error de inferencia]:** ${msgErr}`, [], null);
+      showToast(msgErr, "err");
     } finally {
       state.sending = false;
       $("btn-send-chat").disabled = false;
@@ -713,10 +839,16 @@
         const target = btn.getAttribute("data-rail");
         document.querySelectorAll(".rail-btn[data-rail]").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
+        if (target === "downloads") {
+          switchWorkspaceTab("downloads");
+          return;
+        }
         document.querySelectorAll(".sidebar-view").forEach((v) => v.classList.remove("active"));
-        $(`sidebar-${target}`).classList.add("active");
+        $(`sidebar-${target}`)?.classList.add("active");
         if (target === "models") {
           switchWorkspaceTab("catalog");
+        } else if (target === "sessions") {
+          switchWorkspaceTab("chat");
         }
       });
     });
@@ -730,7 +862,8 @@
       $("btn-toggle-inspector").classList.toggle("active");
     });
 
-    $("btn-open-models-tab").addEventListener("click", () => switchWorkspaceTab("catalog"));
+    $("btn-open-models-tab")?.addEventListener("click", () => switchWorkspaceTab("catalog"));
+    $("btn-go-downloads")?.addEventListener("click", () => switchWorkspaceTab("downloads"));
   }
 
   function switchWorkspaceTab(tab) {
@@ -742,6 +875,10 @@
     document.querySelectorAll(".workspace-view").forEach((v) => v.classList.remove("active"));
     $(`view-${tab}`).classList.add("active");
     if (tab === "catalog") loadCatalog();
+    if (tab === "downloads") {
+      loadTools();
+      loadCatalog();
+    }
     if (tab === "ast" && state.activeProjectId) loadProjectFilesAndAst(state.activeProjectId);
   }
 
@@ -880,6 +1017,36 @@
       });
     });
 
+    $("downloads-model-filters")?.querySelectorAll(".filter-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $("downloads-model-filters").querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.downloadsModelFilter = btn.getAttribute("data-filter");
+        renderDownloadsModelsTable();
+      });
+    });
+
+    $("btn-refresh-tools")?.addEventListener("click", loadTools);
+    $("btn-download-all-tools")?.addEventListener("click", async () => {
+      const btn = $("btn-download-all-tools");
+      btn.disabled = true;
+      showToast("Descargando herramientas faltantes del búnker...", "info");
+      try {
+        const res = await api("/api/tools/download", {
+          method: "POST",
+          body: JSON.stringify({ herramienta_id: "all" }),
+        });
+        state.tools = res.herramientas || [];
+        renderToolsTable();
+        updateMissingToolsBanner();
+        showToast("Herramientas del búnker actualizadas", "ok");
+      } catch (err) {
+        showToast(err.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     document.querySelectorAll(".chip-btn[data-prompt]").forEach((btn) => {
       btn.addEventListener("click", () => {
         sendChatMessage(btn.getAttribute("data-prompt"));
@@ -1006,7 +1173,7 @@
     $("btn-close-web")?.addEventListener("click", cerrarAplicacionWeb);
     window.addEventListener("pagehide", () => enviarBeaconCierre("tab_closed"));
     window.addEventListener("beforeunload", () => enviarBeaconCierre("tab_closed"));
-    await Promise.all([refreshStatus(), refreshTunnelStatus(), loadProjects(), loadSessions(), loadMemory(), loadCatalog()]);
+    await Promise.all([refreshStatus(), refreshTunnelStatus(), loadProjects(), loadSessions(), loadMemory(), loadCatalog(), loadTools()]);
     setInterval(refreshStatus, 3000);
   }
 

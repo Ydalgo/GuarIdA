@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Raiz = Split-Path -Parent $PSScriptRoot
+$Raiz = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $DirDist = Join-Path $Raiz "dist"
 $NombrePaquete = "GuarIdA-Portable-win64"
 $DirStaging = Join-Path $DirDist $NombrePaquete
@@ -29,8 +29,6 @@ $ArchivosRaiz = @(
     "Iniciar_GuarIdA.bat",
     "Iniciar_Web.bat",
     "Iniciar_Servicio.bat",
-    "main.py",
-    "pyproject.toml",
     "README.md",
     "LICENSE"
 )
@@ -40,10 +38,14 @@ foreach ($Archivo in $ArchivosRaiz) {
         Copy-Item $Origen -Destination $DirStaging -Force
     }
 }
+New-Item -ItemType Directory -Force -Path (Join-Path $DirStaging "configuracion") | Out-Null
+if (Test-Path (Join-Path $Raiz "configuracion\pyproject.toml")) {
+    Copy-Item (Join-Path $Raiz "configuracion\pyproject.toml") -Destination (Join-Path $DirStaging "configuracion\pyproject.toml") -Force
+}
 "portable=1" | Out-File -FilePath (Join-Path $DirStaging ".portable") -Encoding ascii
 
-# Copiar paquete guarida_manager sin __pycache__
-robocopy (Join-Path $Raiz "guarida_manager") (Join-Path $DirStaging "guarida_manager") /E /XD __pycache__ .pytest_cache /XF *.pyc /NFL /NDL /NJH /NJS | Out-Null
+# Copiar paquete app sin __pycache__
+robocopy (Join-Path $Raiz "app") (Join-Path $DirStaging "app") /E /XD __pycache__ .pytest_cache /XF *.pyc /NFL /NDL /NJH /NJS | Out-Null
 
 Write-Host "[2/3] Copiando runtime Python embebido y herramientas binarias..." -ForegroundColor Yellow
 robocopy (Join-Path $Raiz "runtime") (Join-Path $DirStaging "runtime") /E /XD __pycache__ /XF *.pyc /NFL /NDL /NJH /NJS | Out-Null

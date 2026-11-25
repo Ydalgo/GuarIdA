@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Raiz = Split-Path -Parent $PSScriptRoot
+$Raiz = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $DirDist = Join-Path $Raiz "dist"
 $DirStaging = Join-Path $DirDist "GuarIdA-Portable-win64"
 $RutaMsi = Join-Path $DirDist "GuarIdA-Offline-Setup-x64-v$Version.msi"

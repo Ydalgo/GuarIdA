@@ -27,9 +27,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install cryptography psutil fastapi uvicorn
 
       - name: Run unit tests
+        env:
+          PYTHONPATH: app
         run: python -m unittest discover tests
 
   build-windows:
@@ -62,11 +64,11 @@ jobs:
 
       - name: Build Portable ZIP (GuarIdA-Portable-win64)
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File scripts\crear_portable_win64.ps1 -Version "${{ steps.ver.outputs.version }}"
+        run: powershell -ExecutionPolicy Bypass -File herramientas\windows\crear_portable_win64.ps1 -Version "${{ steps.ver.outputs.version }}"
 
       - name: Build Offline MSI (GuarIdA-Offline-Setup-x64)
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File scripts\crear_msi_offline.ps1 -Version "${{ steps.ver.outputs.version }}"
+        run: powershell -ExecutionPolicy Bypass -File herramientas\windows\crear_msi_offline.ps1 -Version "${{ steps.ver.outputs.version }}"
 
       - name: Generate SHA256SUMS
         shell: pwsh
@@ -112,6 +114,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: servidor/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

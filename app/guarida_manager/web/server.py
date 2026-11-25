@@ -170,8 +170,8 @@ class ControladorWebGuarida:
 
     def debe_finalizar_por_cierre_web(
         self,
-        gracia_beacon_s: float = 2.5,
-        timeout_inactividad_s: float = 15.0,
+        gracia_beacon_s: float = 10.0,
+        timeout_inactividad_s: float = 30.0,
     ) -> bool:
         """Indica si la sesión web se cerró y procede detener la aplicación."""
         with self._lock_web:
@@ -358,6 +358,47 @@ class ControladorWebGuarida:
         regs = menu_actions.afinar_todos_automatico(self.cache, forzar=True)
         self._invalidar_caches_modelos()
         return [asdict(r) for r in regs]
+
+    def listar_herramientas_bunker(self) -> list[dict[str, Any]]:
+        """Devuelve el estado de todas las herramientas del búnker (llama-server, git, ripgrep, cloudflared)."""
+        estados = GestorHerramientasBunker.verificar_todas_herramientas()
+        return [
+            {
+                "id": e.id,
+                "nombre": e.nombre,
+                "instalada": bool(e.instalada),
+                "es_critica": bool(e.es_critica),
+                "ruta": str(e.ruta) if e.ruta else None,
+                "version": e.version,
+                "descripcion": e.descripcion,
+            }
+            for e in estados
+        ]
+
+    def descargar_herramienta_bunker(self, herramienta_id: str) -> dict[str, Any]:
+        """Descarga y despliega una herramienta concreta o todas las faltantes ('all')."""
+        hid = str(herramienta_id or "").strip()
+        if not hid:
+            raise ValueError("Se requiere 'herramienta_id'.")
+        if hid == "all":
+            descargadas: list[str] = []
+            for est in GestorHerramientasBunker.verificar_todas_herramientas():
+                if not est.instalada:
+                    GestorHerramientasBunker.descargar_y_desplegar(est.id)
+                    descargadas.append(est.id)
+            return {
+                "ok": True,
+                "herramienta_id": "all",
+                "descargadas": descargadas,
+                "herramientas": self.listar_herramientas_bunker(),
+            }
+        ruta = GestorHerramientasBunker.descargar_y_desplegar(hid)
+        return {
+            "ok": True,
+            "herramienta_id": hid,
+            "ruta_local": str(ruta),
+            "herramientas": self.listar_herramientas_bunker(),
+        }
 
     def descargar_modelo(self, modelo_id: str) -> dict[str, Any]:
         """Descarga un modelo del catálogo y calcula su afinamiento inicial."""
@@ -1260,6 +1301,8 @@ document.getElementById('f').addEventListener('submit', async (e) => {
                 self._enviar_json(HTTPStatus.OK, ctrl.estado_tunel_remoto())
             elif ruta == "/api/models":
                 self._enviar_json(HTTPStatus.OK, {"modelos": ctrl.listar_catalogo_modelos()})
+            elif ruta == "/api/tools":
+                self._enviar_json(HTTPStatus.OK, {"herramientas": ctrl.listar_herramientas_bunker()})
             elif ruta == "/api/projects":
                 self._enviar_json(HTTPStatus.OK, {"proyectos": ctrl.listar_proyectos()})
             elif ruta == "/api/projects/files":
@@ -1340,6 +1383,9 @@ document.getElementById('f').addEventListener('submit', async (e) => {
                 self._enviar_json(HTTPStatus.OK, {"afinados": res})
             elif ruta == "/api/models/download":
                 res = ctrl.descargar_modelo(str(body.get("modelo_id") or ""))
+                self._enviar_json(HTTPStatus.OK, res)
+            elif ruta == "/api/tools/download":
+                res = ctrl.descargar_herramienta_bunker(str(body.get("herramienta_id") or ""))
                 self._enviar_json(HTTPStatus.OK, res)
             elif ruta == "/api/server/start":
                 srv = ctrl.iniciar_motor(

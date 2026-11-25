@@ -21,8 +21,8 @@ RUN groupadd -g 10001 guarida && \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE main.py /app/
-COPY guarida_manager/ /app/guarida_manager/
+COPY configuracion/pyproject.toml README.md LICENSE /app/
+COPY app/ /app/
 
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir -e ".[web]" && \

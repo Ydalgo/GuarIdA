@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIR_RUNTIME="$RAIZ/runtime/python"
 DIR_DATOS="$RAIZ/datos"
 PY_EMB="$DIR_RUNTIME/bin/python3"
@@ -65,7 +65,7 @@ echo "[2/3] Instalando dependencias Python..."
     "uvicorn==0.32.0"
 
 echo "[3/3] Descargando herramientas del bunker (llama-server, ripgrep)..."
-PYTHONPATH="$RAIZ" "$PY_EMB" -c '
+PYTHONPATH="$RAIZ/app" "$PY_EMB" -c '
 from guarida_manager.downloader.tools import GestorHerramientasBunker
 
 for hid in ("llama-server", "ripgrep"):
@@ -74,6 +74,6 @@ for hid in ("llama-server", "ripgrep"):
 print("Herramientas listas.")
 '
 
-chmod +x "$RAIZ/iniciar_guarida.sh" "$RAIZ/iniciar_web.sh" "$RAIZ/instalar_desde_cero.sh"
+chmod +x "$RAIZ/herramientas/linux/"*.sh
 echo ""
 echo "[OK] Instalacion completada. Ejecuta ./iniciar_guarida.sh o ./iniciar_web.sh"

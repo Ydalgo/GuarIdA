@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Raiz = Split-Path -Parent $PSScriptRoot
+$Raiz = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $DirRuntime = Join-Path $Raiz "runtime\python"
 $DirDatos = Join-Path $Raiz "datos"
 $PyExe = Join-Path $DirRuntime "python.exe"
@@ -36,8 +36,8 @@ if (-not (Test-Path $PyExe)) {
     if ($PthFile) {
         $Contenido = Get-Content $PthFile.FullName
         $Contenido = $Contenido -replace "^#\s*import site", "import site"
-        if ($Contenido -notcontains "..\..") {
-            $Contenido += "..\.."
+        if ($Contenido -notcontains "..\..\app") {
+            $Contenido += "..\..\app"
         }
         $Contenido | Set-Content -Path $PthFile.FullName -Encoding ascii
     }
@@ -45,8 +45,12 @@ if (-not (Test-Path $PyExe)) {
     Write-Host "[1/4] Python embebido ya presente en runtime\python." -ForegroundColor Green
 }
 
-& $PyExe -m pip --version 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
+$ErrorActionPreference = "Continue"
+& $PyExe -m pip --version *> $null
+$TienePip = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = "Stop"
+
+if (-not $TienePip) {
     Write-Host "[2/4] Instalando pip en Python embebido..." -ForegroundColor Yellow
     $GetPipPath = Join-Path $env:TEMP "get-pip.py"
     Invoke-WebRequest -Uri $GetPipUrl -OutFile $GetPipPath -UseBasicParsing
@@ -73,6 +77,7 @@ for hid in ("llama-server", "git", "ripgrep"):
     GestorHerramientasBunker.descargar_y_desplegar(hid)
 print("Herramientas listas.")
 "@
+    $env:PYTHONPATH = Join-Path $Raiz "app"
     & $PyExe -c $CodigoTools
 } else {
     Write-Host "[4/4] Omitiendo descarga de herramientas (-SinHerramientas)." -ForegroundColor DarkGray

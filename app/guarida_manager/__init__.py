@@ -8,7 +8,8 @@ def resolver_directorio_raiz_guarida() -> Path:
     if env_home:
         return Path(env_home).expanduser().resolve()
 
-    raiz_proyecto = Path(__file__).resolve().parent.parent
+    raiz_app = Path(__file__).resolve().parent.parent
+    raiz_proyecto = raiz_app.parent if raiz_app.name == "app" else raiz_app
     if (
         (raiz_proyecto / ".portable").exists()
         or (raiz_proyecto / "runtime").exists()
