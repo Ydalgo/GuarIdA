@@ -117,8 +117,10 @@ Conclusiones de la comparativa:
      ./iniciar_guarida.sh   # o ./iniciar_web.sh
      ```
 
-### Opción C: Generar el `.zip` portable o el instalador `.msi` offline
-Si quieres construir los paquetes de distribución desde el repositorio:
+### Opción C: Generar o publicar el `.zip` portable, `.msi` offline y Docker (GHCR)
+Al hacer push de un tag `v*` (por ejemplo `git tag v0.2.0 && git push origin v0.2.0`), el workflow [release.yml](.github/workflows/release.yml) ejecuta los tests, compila `GuarIdA-Portable-win64` + `GuarIdA-Offline-Setup-x64.msi` + `SHA256SUMS.txt` para **GitHub Releases**, y publica la imagen Docker en **GitHub Packages (`ghcr.io/ydalgo/guarida`)**.
+
+En local también puedes construir los paquetes manualmente:
 ```powershell
 # 1. Generar GuarIdA-Portable-win64-vX.Y.Z.zip en dist\
 powershell -ExecutionPolicy Bypass -File scripts\crear_portable_win64.ps1
@@ -126,6 +128,14 @@ powershell -ExecutionPolicy Bypass -File scripts\crear_portable_win64.ps1
 # 2. Generar GuarIdA-Offline-Setup-x64-vX.Y.Z.msi en dist\ (requiere WiX Toolset: dotnet tool install --global wix)
 powershell -ExecutionPolicy Bypass -File scripts\crear_msi_offline.ps1
 ```
+
+### GuarIdA como servicio (Red local, Docker y acceso desde Internet)
+- **Red local (Wi-Fi / LAN):** ejecuta `Iniciar_Servicio.bat` (Windows) o `./iniciar_servicio.sh` (Linux/macOS) para escuchar en `0.0.0.0:8080` y acceder desde móviles o tablets con la IP local mostrada en consola.
+- **Desde Internet sin abrir puertos ni dominio:** pulsa **Acceso Remoto** en la barra superior de la web o arranca con `--remoto` (`Iniciar_Servicio.bat --remoto`). Usa `cloudflared` (Apache-2.0, gratuito) y protege el acceso con un código aleatorio.
+- **Docker / GitHub Packages:**
+  ```bash
+  docker compose up -d
+  ```
 
 ## Estructura del proyecto y rutas
 

@@ -77,6 +77,16 @@ class GestorHerramientasBunker:
             sha256_win_x64="d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1",
             sha256_linux_x64="4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e",
         ),
+        "cloudflared": DefinicionHerramienta(
+            id="cloudflared",
+            nombre="cloudflared (Túnel HTTPS Open Source)",
+            descripcion="Cliente Apache-2.0 para exponer la interfaz web por HTTPS sin abrir puertos ni comprar dominio.",
+            es_critica=False,
+            comando_comprobacion=["--version"],
+            nombre_binario_final="cloudflared.exe" if platform.system() == "Windows" else "cloudflared",
+            url_win_x64="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe",
+            url_linux_x64="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+        ),
     }
 
     @classmethod
@@ -233,8 +243,17 @@ class GestorHerramientasBunker:
                 user_agent="GuarIdA-Tools-Installer/1.0",
             )
 
-            log(f"Descomprimiendo {herramienta.nombre} de forma segura en {dir_herramienta}...", 90.0)
-            DescargadorSeguro.extraer_archivo_seguro(ruta_temporal, dir_herramienta)
+            es_archivo_comprimido = any(
+                str(ruta_temporal).lower().endswith(ext)
+                for ext in (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
+            )
+            if es_archivo_comprimido:
+                log(f"Descomprimiendo {herramienta.nombre} de forma segura en {dir_herramienta}...", 90.0)
+                DescargadorSeguro.extraer_archivo_seguro(ruta_temporal, dir_herramienta)
+            else:
+                ruta_destino_bin = dir_herramienta / herramienta.nombre_binario_final
+                log(f"Instalando binario {herramienta.nombre_binario_final} en {dir_herramienta}...", 90.0)
+                shutil.move(str(ruta_temporal), str(ruta_destino_bin))
 
             ruta_resuelta = cls.resolver_ruta_ejecutable(herramienta_id)
 

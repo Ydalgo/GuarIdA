@@ -28,6 +28,7 @@ Write-Host "[1/3] Copiando codigo y lanzadores..." -ForegroundColor Yellow
 $ArchivosRaiz = @(
     "Iniciar_GuarIdA.bat",
     "Iniciar_Web.bat",
+    "Iniciar_Servicio.bat",
     "main.py",
     "pyproject.toml",
     "README.md",

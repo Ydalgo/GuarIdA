@@ -231,6 +231,73 @@ class TestServidorWebGuarida(unittest.TestCase):
         self._post("/api/web/close", {"motivo": "manual"})
         self.assertTrue(self.ctrl.debe_finalizar_por_cierre_web())
 
+    def test_tunel_remoto_y_autenticacion(self):
+        import urllib.error
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+        # Estado inicial inactivo
+        code_st, raw_st, _ = self._get("/api/tunnel/status")
+        self.assertEqual(code_st, 200)
+        self.assertFalse(json.loads(raw_st)["activo"])
+
+        # Simular túnel activo en memoria (sin lanzar binario real)
+        proc_fake = MagicMock()
+        proc_fake.poll.return_value = None
+        proc_fake.pid = 99999
+        with self.ctrl.gestor_tunel._lock:
+            self.ctrl.gestor_tunel._proceso = proc_fake
+            self.ctrl.gestor_tunel._url_publica = "https://demo-test.trycloudflare.com"
+            self.ctrl.gestor_tunel._token_acceso = "tok123seguro"
+            self.ctrl.gestor_tunel._puerto_local = self.ctrl.puerto_web_activo
+
+        # Localhost sigue entrando directo
+        code_loc, _, _ = self._get("/api/status")
+        self.assertEqual(code_loc, 200)
+
+        # Petición externa (simulada con Cf-Connecting-Ip) sin token -> 401 en API
+        req_api = urllib.request.Request(
+            f"{self.base_url}/api/status",
+            headers={"Cf-Connecting-Ip": "203.0.113.10"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            opener.open(req_api, timeout=5)
+        self.assertEqual(ctx.exception.code, 401)
+
+        # Petición externa a / sin token -> pantalla de login HTML
+        req_root = urllib.request.Request(
+            f"{self.base_url}/",
+            headers={"Cf-Connecting-Ip": "203.0.113.10"},
+        )
+        with opener.open(req_root, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertIn("Acceso Remoto", resp.read().decode("utf-8"))
+
+        # Login externo con token correcto -> Set-Cookie + acceso 200 a /api/status
+        req_login = urllib.request.Request(
+            f"{self.base_url}/api/auth/login",
+            data=json.dumps({"token": "tok123seguro"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Cf-Connecting-Ip": "203.0.113.10"},
+            method="POST",
+        )
+        with opener.open(req_login, timeout=5) as resp_login:
+            self.assertEqual(resp_login.status, 200)
+            cookie_hdr = resp_login.headers.get("Set-Cookie") or ""
+            self.assertIn("guarida_auth=", cookie_hdr)
+            cookie_pair = cookie_hdr.split(";", 1)[0]
+
+        req_auth = urllib.request.Request(
+            f"{self.base_url}/api/status",
+            headers={"Cf-Connecting-Ip": "203.0.113.10", "Cookie": cookie_pair},
+        )
+        with opener.open(req_auth, timeout=5) as resp_auth:
+            self.assertEqual(resp_auth.status, 200)
+
+        # Detener túnel
+        code_stop, res_stop = self._post("/api/tunnel/stop", {})
+        self.assertEqual(code_stop, 200)
+        self.assertFalse(res_stop["activo"])
+
 
 if __name__ == "__main__":
     unittest.main()

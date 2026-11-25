@@ -17,11 +17,18 @@ def main(argv: Optional[list[str]] = None) -> None:
         action="store_true",
         help="No abrir automáticamente el navegador al iniciar",
     )
+    parser.add_argument(
+        "--remoto",
+        "--remote",
+        action="store_true",
+        help="Abrir túnel HTTPS público (cloudflared) con código de acceso",
+    )
     args = parser.parse_args(argv)
     iniciar_servidor_web(
         host=args.host,
         port=args.port,
         abrir_navegador=not args.no_browser,
+        remoto=args.remoto,
     )
 
 

@@ -1,6 +1,7 @@
 """Servidor HTTP local autoalojado para GuarIdA (100% offline, sin dependencias externas)."""
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -40,6 +41,7 @@ from guarida_manager.hardware import obtener_informacion_hardware
 from guarida_manager.logger import inicializar_logging, obtener_logger
 from guarida_manager.proyectos import GestorProyectos
 from guarida_manager.telemetry import MetricasTelemetria, MonitorTelemetriaHardware
+from guarida_manager.web.tunnel import GestorTunelRemoto
 
 logger = obtener_logger("web")
 
@@ -105,6 +107,42 @@ class ControladorWebGuarida:
         self.cierre_pendiente_ts: Optional[float] = None
         self.evento_cierre_web = threading.Event()
         self.peticiones_activas: int = 0
+        self.gestor_tunel = GestorTunelRemoto()
+        self._secreto_cookie = secrets.token_bytes(32)
+        self.puerto_web_activo: Optional[int] = None
+
+    def _token_tunel_activo(self) -> Optional[str]:
+        estado = self.gestor_tunel.estado()
+        if not estado.get("activo"):
+            return None
+        tok = estado.get("token_acceso")
+        return str(tok) if tok else None
+
+    def firma_cookie_remota(self, token: str) -> str:
+        return hmac.new(self._secreto_cookie, token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def validar_token_remoto(self, token_candidato: str) -> bool:
+        token_real = self._token_tunel_activo()
+        if not token_real or not token_candidato:
+            return False
+        return hmac.compare_digest(token_candidato.strip(), token_real)
+
+    def validar_cookie_remota(self, firma_candidata: str) -> bool:
+        token_real = self._token_tunel_activo()
+        if not token_real or not firma_candidata:
+            return False
+        firma_esperada = self.firma_cookie_remota(token_real)
+        return hmac.compare_digest(firma_candidata.strip(), firma_esperada)
+
+    def estado_tunel_remoto(self) -> dict[str, Any]:
+        return self.gestor_tunel.estado()
+
+    def iniciar_tunel_remoto(self, puerto: Optional[int] = None) -> dict[str, Any]:
+        puerto_objetivo = puerto or self.puerto_web_activo or 8080
+        return self.gestor_tunel.iniciar(puerto_local=int(puerto_objetivo))
+
+    def detener_tunel_remoto(self) -> dict[str, Any]:
+        return self.gestor_tunel.detener()
 
     def reiniciar_monitor_cierre(self) -> None:
         """Reinicia el estado de presencia del navegador para vigilar el cierre de la web."""
@@ -1030,19 +1068,122 @@ class ManejadorHTTPGuarida(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         logger.debug("HTTP %s - " + format, self.address_string(), *args)
 
-    def _enviar_bytes(self, codigo: int, content_type: str, datos: bytes) -> None:
+    def _enviar_bytes(
+        self,
+        codigo: int,
+        content_type: str,
+        datos: bytes,
+        cabeceras_extra: Optional[list[tuple[str, str]]] = None,
+    ) -> None:
         self.send_response(codigo)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(datos)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Cache-Control", "no-store")
+        if cabeceras_extra:
+            for k, v in cabeceras_extra:
+                self.send_header(k, v)
         self.end_headers()
         self.wfile.write(datos)
 
-    def _enviar_json(self, codigo: int, payload: Any) -> None:
+    def _enviar_json(
+        self,
+        codigo: int,
+        payload: Any,
+        cabeceras_extra: Optional[list[tuple[str, str]]] = None,
+    ) -> None:
         cuerpo = json.dumps(_serializar_json(payload), ensure_ascii=False).encode("utf-8")
-        self._enviar_bytes(codigo, "application/json; charset=utf-8", cuerpo)
+        self._enviar_bytes(codigo, "application/json; charset=utf-8", cuerpo, cabeceras_extra=cabeceras_extra)
+
+    def _es_peticion_externa(self) -> bool:
+        """Detecta si la petición llega desde fuera de localhost/túnel."""
+        if (
+            self.headers.get("Cf-Connecting-Ip")
+            or self.headers.get("X-Forwarded-For")
+            or self.headers.get("X-Forwarded-Host")
+        ):
+            return True
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        host_sin_puerto = host.split(":", 1)[0]
+        return host_sin_puerto not in ("127.0.0.1", "localhost", "::1", "[::1]")
+
+    def _leer_cookie(self, nombre: str) -> Optional[str]:
+        cruda = self.headers.get("Cookie") or ""
+        for parte in cruda.split(";"):
+            k, sep, v = parte.strip().partition("=")
+            if sep and k == nombre:
+                return v.strip()
+        return None
+
+    def _esta_autenticado(self, qs: dict[str, list[str]]) -> tuple[bool, Optional[str]]:
+        """Verifica acceso remoto cuando el túnel está activo y la petición es externa."""
+        ctrl = self.controlador
+        if not ctrl.gestor_tunel.esta_activo() or not self._es_peticion_externa():
+            return True, None
+
+        token_qs = (qs.get("token") or [""])[0]
+        if token_qs and ctrl.validar_token_remoto(token_qs):
+            return True, ctrl.firma_cookie_remota(token_qs)
+
+        auth_hdr = self.headers.get("Authorization") or ""
+        if auth_hdr.lower().startswith("bearer "):
+            if ctrl.validar_token_remoto(auth_hdr[7:]):
+                return True, None
+
+        cookie_val = self._leer_cookie("guarida_auth") or ""
+        if cookie_val and ctrl.validar_cookie_remota(cookie_val):
+            return True, None
+
+        return False, None
+
+    def _servir_login_remoto(self) -> None:
+        html = """<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GuarIdA — Acceso Remoto</title>
+<style>
+  body{margin:0;font-family:system-ui,sans-serif;background:#0f1419;color:#e6edf3;display:flex;min-height:100vh;align-items:center;justify-content:center}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:28px;max-width:380px;width:90%}
+  h1{font-size:1.25rem;margin:0 0 8px}
+  p{font-size:.9rem;color:#8b949e;margin:0 0 18px}
+  input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:1rem;margin-bottom:12px}
+  button{width:100%;padding:10px;border:0;border-radius:8px;background:#238636;color:#fff;font-weight:600;cursor:pointer;font-size:1rem}
+  button:hover{background:#2ea043}
+  .err{color:#f85149;font-size:.85rem;margin-top:10px;min-height:1.1em}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>GuarIdA — Acceso Remoto</h1>
+  <p>Introduce el código de acceso mostrado en el equipo local.</p>
+  <form id="f">
+    <input id="tok" type="password" placeholder="Código de acceso" autocomplete="off" required>
+    <button type="submit">Entrar</button>
+  </form>
+  <div id="err" class="err"></div>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.textContent = '';
+  const r = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({token: document.getElementById('tok').value.trim()})
+  });
+  if (r.ok) { location.href = '/'; }
+  else { const d = await r.json().catch(() => ({})); err.textContent = d.error || 'Código incorrecto'; }
+});
+</script>
+</body>
+</html>"""
+        self._enviar_bytes(HTTPStatus.OK, "text/html; charset=utf-8", html.encode("utf-8"))
 
     def _leer_json_body(self) -> dict[str, Any]:
         try:
@@ -1085,6 +1226,27 @@ class ManejadorHTTPGuarida(BaseHTTPRequestHandler):
         with ctrl._lock_web:
             ctrl.peticiones_activas += 1
         try:
+            autenticado, cookie_nueva = self._esta_autenticado(qs)
+            if cookie_nueva and ruta == "/":
+                self.send_response(HTTPStatus.FOUND)
+                self.send_header(
+                    "Set-Cookie",
+                    f"guarida_auth={cookie_nueva}; HttpOnly; SameSite=Lax; Path=/",
+                )
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
+
+            if not autenticado:
+                if ruta.startswith("/api/"):
+                    self._enviar_json(
+                        HTTPStatus.UNAUTHORIZED,
+                        {"error": "Acceso remoto protegido. Se requiere código de acceso."},
+                    )
+                else:
+                    self._servir_login_remoto()
+                return
+
             if ruta in ("/", "/app.js", "/styles.css", "/api/status"):
                 ctrl.registrar_latido_web()
 
@@ -1094,6 +1256,8 @@ class ManejadorHTTPGuarida(BaseHTTPRequestHandler):
 
             if ruta == "/api/status":
                 self._enviar_json(HTTPStatus.OK, ctrl.obtener_estado_sistema())
+            elif ruta == "/api/tunnel/status":
+                self._enviar_json(HTTPStatus.OK, ctrl.estado_tunel_remoto())
             elif ruta == "/api/models":
                 self._enviar_json(HTTPStatus.OK, {"modelos": ctrl.listar_catalogo_modelos()})
             elif ruta == "/api/projects":
@@ -1141,9 +1305,36 @@ class ManejadorHTTPGuarida(BaseHTTPRequestHandler):
             ctrl.peticiones_activas += 1
         try:
             body = self._leer_json_body()
+            if ruta == "/api/auth/login":
+                token = str(body.get("token") or "")
+                if not ctrl.validar_token_remoto(token):
+                    self._enviar_json(HTTPStatus.UNAUTHORIZED, {"error": "Código de acceso incorrecto."})
+                    return
+                firma = ctrl.firma_cookie_remota(token.strip())
+                self._enviar_json(
+                    HTTPStatus.OK,
+                    {"autenticado": True},
+                    cabeceras_extra=[
+                        ("Set-Cookie", f"guarida_auth={firma}; HttpOnly; SameSite=Lax; Path=/")
+                    ],
+                )
+                return
+
+            autenticado, _ = self._esta_autenticado({})
+            if not autenticado:
+                self._enviar_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"error": "Acceso remoto protegido. Se requiere código de acceso."},
+                )
+                return
+
             if ruta == "/api/web/close":
                 motivo = str(body.get("motivo") or "tab_closed")
                 self._enviar_json(HTTPStatus.OK, ctrl.solicitar_cierre_web(motivo))
+            elif ruta == "/api/tunnel/start":
+                self._enviar_json(HTTPStatus.OK, ctrl.iniciar_tunel_remoto())
+            elif ruta == "/api/tunnel/stop":
+                self._enviar_json(HTTPStatus.OK, ctrl.detener_tunel_remoto())
             elif ruta == "/api/models/tune":
                 res = ctrl.afinar_modelos(modelo_id=body.get("modelo_id"))
                 self._enviar_json(HTTPStatus.OK, {"afinados": res})
@@ -1214,6 +1405,13 @@ class ManejadorHTTPGuarida(BaseHTTPRequestHandler):
         ctrl = self.controlador
 
         try:
+            autenticado, _ = self._esta_autenticado(qs)
+            if not autenticado:
+                self._enviar_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"error": "Acceso remoto protegido. Se requiere código de acceso."},
+                )
+                return
             body = self._leer_json_body()
             if ruta == "/api/projects":
                 pid = str(body.get("proyecto_id") or (qs.get("proyecto_id") or [""])[0])
@@ -1257,7 +1455,9 @@ def crear_servidor_web(
     """Construye una instancia lista de ServidorWebGuarida en un puerto libre."""
     puerto_final = 0 if port == 0 else asegurar_puerto_disponible(host, port)
     ctrl = controlador or ControladorWebGuarida()
-    return ServidorWebGuarida((host, puerto_final), ctrl)
+    srv = ServidorWebGuarida((host, puerto_final), ctrl)
+    ctrl.puerto_web_activo = int(srv.server_address[1])
+    return srv
 
 
 def asegurar_servidor_web_en_segundo_plano(
@@ -1329,6 +1529,10 @@ def ejecutar_web_hasta_cierre(
         pass
     finally:
         try:
+            srv.controlador.detener_tunel_remoto()
+        except Exception:
+            pass
+        try:
             srv.controlador.detener_motor()
         except Exception:
             pass
@@ -1347,19 +1551,45 @@ def iniciar_servidor_web(
     port: int = 8080,
     abrir_navegador: bool = True,
     gestor_cache: Optional[GestorCache] = None,
+    remoto: bool = False,
 ) -> None:
     """Arranca el servidor web autoalojado de GuarIdA y abre opcionalmente el navegador."""
     inicializar_logging()
     ctrl = ControladorWebGuarida(gestor_cache=gestor_cache)
     servidor = crear_servidor_web(host=host, port=port, controlador=ctrl)
     puerto_real = int(servidor.server_address[1])
-    url = f"http://{host}:{puerto_real}"
+    url = f"http://127.0.0.1:{puerto_real}" if host == "0.0.0.0" else f"http://{host}:{puerto_real}"
+    ip_lan = None
+    if host == "0.0.0.0":
+        import socket
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                ip_lan = s.getsockname()[0]
+        except Exception:
+            ip_lan = None
 
     print("=" * 75, flush=True)
     print("  GUARIDA // INTERFAZ WEB AUTOALOJADA (ESTILO ANTIGRAVITY IDE)", flush=True)
     print("=" * 75, flush=True)
     print(f"  URL local soberana:  {url}", flush=True)
-    print("  Modo:                100% offline / loopback local", flush=True)
+    if ip_lan:
+        print(f"  URL red local (LAN): http://{ip_lan}:{puerto_real}", flush=True)
+    print(
+        "  Modo:                "
+        + ("Servicio LAN (0.0.0.0)" if host == "0.0.0.0" else "100% offline / loopback local"),
+        flush=True,
+    )
+    if remoto:
+        print("  Iniciando túnel HTTPS (cloudflared)...", flush=True)
+        try:
+            info_tunel = ctrl.iniciar_tunel_remoto(puerto=puerto_real)
+            print(f"  URL pública HTTPS:   {info_tunel['url_publica']}", flush=True)
+            print(f"  Código de acceso:    {info_tunel['token_acceso']}", flush=True)
+            print(f"  Enlace directo:      {info_tunel['url_con_token']}", flush=True)
+        except Exception as exc:
+            print(f"  [AVISO] No se pudo abrir el túnel remoto: {exc}", flush=True)
     print("  Detener servidor:    Ctrl+C", flush=True)
     print("=" * 75, flush=True)
 
@@ -1371,6 +1601,10 @@ def iniciar_servidor_web(
     except KeyboardInterrupt:
         print("\nDeteniendo servidor web GuarIdA...")
     finally:
+        try:
+            ctrl.detener_tunel_remoto()
+        except Exception:
+            pass
         try:
             ctrl.detener_motor()
         except Exception:

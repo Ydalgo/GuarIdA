@@ -951,13 +951,62 @@
     window.close();
   }
 
+  async function refreshTunnelStatus() {
+    const btn = $("btn-tunnel-toggle");
+    const lbl = $("tunnel-status-label");
+    if (!btn || !lbl) return;
+    try {
+      const st = await api("/api/tunnel/status");
+      if (st.activo) {
+        lbl.textContent = "ON";
+        btn.title = `Activo: ${st.url_publica} (Código: ${st.token_acceso})`;
+      } else {
+        lbl.textContent = "OFF";
+        btn.title = "Abrir túnel HTTPS gratuito (cloudflared)";
+      }
+    } catch (_) {
+      lbl.textContent = "OFF";
+    }
+  }
+
+  async function toggleTunnelRemoto() {
+    const btn = $("btn-tunnel-toggle");
+    const lbl = $("tunnel-status-label");
+    if (!btn || !lbl) return;
+    btn.disabled = true;
+    try {
+      const actual = await api("/api/tunnel/status");
+      if (actual.activo) {
+        await api("/api/tunnel/stop", { method: "POST", body: JSON.stringify({}) });
+        await refreshTunnelStatus();
+      } else {
+        lbl.textContent = "...";
+        const res = await api("/api/tunnel/start", { method: "POST", body: JSON.stringify({}) });
+        await refreshTunnelStatus();
+        if (res.url_con_token) {
+          navigator.clipboard?.writeText(res.url_con_token).catch(() => {});
+          window.prompt(
+            `Túnel HTTPS activo (copiado al portapapeles).\nCódigo: ${res.token_acceso}`,
+            res.url_con_token
+          );
+        }
+      }
+    } catch (err) {
+      window.alert(`No se pudo cambiar el túnel remoto: ${err.message || err}`);
+      await refreshTunnelStatus();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   async function init() {
     wireNavigation();
     wireActions();
+    $("btn-tunnel-toggle")?.addEventListener("click", toggleTunnelRemoto);
     $("btn-close-web")?.addEventListener("click", cerrarAplicacionWeb);
     window.addEventListener("pagehide", () => enviarBeaconCierre("tab_closed"));
     window.addEventListener("beforeunload", () => enviarBeaconCierre("tab_closed"));
-    await Promise.all([refreshStatus(), loadProjects(), loadSessions(), loadMemory(), loadCatalog()]);
+    await Promise.all([refreshStatus(), refreshTunnelStatus(), loadProjects(), loadSessions(), loadMemory(), loadCatalog()]);
     setInterval(refreshStatus, 3000);
   }
 

@@ -1,0 +1,135 @@
+name: Build & Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run unit tests
+        run: python -m unittest discover tests
+
+  build-windows:
+    name: Windows Portable ZIP + MSI Offline
+    needs: [test]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8 SDK for WiX Toolset
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install WiX Toolset CLI
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Resolve release version
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match '^v(\d+\.\d+\.\d+)') {
+            $v = $Matches[1]
+          } else {
+            $v = "0.2.0"
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build Portable ZIP (GuarIdA-Portable-win64)
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts\crear_portable_win64.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: Build Offline MSI (GuarIdA-Offline-Setup-x64)
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts\crear_msi_offline.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        run: |
+          Get-FileHash dist\*.zip, dist\*.msi -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Out-File -FilePath dist\SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: |
+            dist/*.zip
+            dist/*.msi
+            dist/SHA256SUMS.txt
+
+  build-docker:
+    name: Docker Image (GitHub Packages / GHCR)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch || startsWith(github.ref, 'refs/tags/v')}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-assets
+          path: release_assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release_assets/*
