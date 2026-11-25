@@ -703,7 +703,9 @@ class GestorProyectos:
         if isinstance(ruta_db, (str, Path)):
             self.dir_cache_snapshots = Path(ruta_db).parent / "cache_proyectos"
         else:
-            self.dir_cache_snapshots = Path.home() / ".guarida" / "cache_proyectos"
+            from guarida_manager import DIRECTORIO_CACHE_PROYECTOS
+
+            self.dir_cache_snapshots = DIRECTORIO_CACHE_PROYECTOS
         self.sanitizador = SanitizadorPrivacidad(modo=modo_privacidad)
         self.funcion_vlm = funcion_vlm
         # Árboles AST cargados en memoria por proyecto {proyecto_id: ArbolNodosCodigo}

@@ -10,6 +10,7 @@ from guarida_manager.cache import GestorCache
 from guarida_manager.chat import ejecutar_chat_terminal
 from guarida_manager.comparator import ComparadorModelosHardware
 from guarida_manager.engine import ClienteLlamaOffline, GestorLlamaServer, LlamaServerConfig
+from guarida_manager.engine.server import asegurar_puerto_disponible
 from guarida_manager.downloader.compliance import GestorCumplimientoNormativo, RegionNormativa
 from guarida_manager.downloader.models import (
     CatalogoModelos,
@@ -440,6 +441,9 @@ def opcion_motor_inferencia(gestor_cache: Optional[GestorCache] = None) -> None:
                                         gestor_cache=cache,
                                         api_key=clave_api,
                                     )
+                                    config.port = asegurar_puerto_disponible(config.host, config.port)
+                                    cliente_llama.port = config.port
+                                    cliente_llama.base_url = f"http://{config.host}:{config.port}"
                                     cliente_llama.api_key = clave_api
                                     print(f"Levantando '{mod_sel['id']}' con {config.n_gpu_layers} capas GPU y contexto de {config.ctx_size}...")
                                     res = gestor_server.iniciar_servidor(config)
@@ -782,6 +786,7 @@ def ejecutar_comparativa_ast_directa(gestor_cache: Optional[GestorCache] = None)
                         gestor_cache=cache,
                         api_key=clave_gen,
                     )
+                    cfg_gen.port = asegurar_puerto_disponible(cfg_gen.host, cfg_gen.port)
                     opt_db = cache.obtener_configuracion_optima(mod_gen["id"], hw_actual.hash_hardware)
                     etiqueta_cfg = "AFINADO EN SQLITE" if opt_db else "AUTO-HEURÍSTICA (SIN AFINAR AÚN)"
                     cliente = ClienteLlamaOffline(host=cfg_gen.host, port=cfg_gen.port, api_key=clave_gen)
@@ -1178,6 +1183,9 @@ def opcion_afinador_y_benchmark(gestor_cache: Optional[GestorCache] = None) -> N
                         gestor_cache=cache,
                         api_key=clave_api,
                     )
+                    cfg_levantar.port = asegurar_puerto_disponible(cfg_levantar.host, cfg_levantar.port)
+                    cliente.port = cfg_levantar.port
+                    cliente.base_url = f"http://{cfg_levantar.host}:{cfg_levantar.port}"
                     cliente.api_key = clave_api
                     print(f"Arrancando '{mod_sel['id']}' en puerto {cfg_levantar.port}...")
                     gestor_srv.iniciar_servidor(cfg_levantar)
@@ -1275,6 +1283,14 @@ def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
     cache = gestor_cache or GestorCache()
     inicializar_logging()
 
+    url_web = "http://127.0.0.1:8080"
+    try:
+        from guarida_manager.web.server import asegurar_servidor_web_en_segundo_plano
+
+        url_web = asegurar_servidor_web_en_segundo_plano(gestor_cache=cache)
+    except Exception as e_web:
+        logger.debug(f"No se pudo auto-iniciar servidor web en segundo plano: {e_web}")
+
     # Escaneo automático de hardware inmediatamente en el arranque de la aplicación
     info_hw = obtener_informacion_hardware()
     est_hw = menu_actions.estimar_conjunto_modelos_optimo(info_hw)
@@ -1312,11 +1328,12 @@ def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
         print("  [5] Diagnóstico del Sistema (Hardware, Caché, Tests y Logs)")
         print("  [6] Chat por Terminal con Modelo (Parejas Recomendadas / Métricas)")
         print("  [7] Proyectos y Documentos (Chat con tu repositorio, sesiones)")
+        print(f"  [W] INTERFAZ WEB AUTOALOJADA: Panel Agéntico estilo Antigravity ({url_web})")
         print("  [0] Salir")
         print("-" * 75)
         
         try:
-            opcion = input("Selecciona una opción [A, 1-7, 0]: ").strip()
+            opcion = input("Selecciona una opción [A, W, 1-7, 0]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n\nSaliendo de GuarIdA...")
             sys.exit(0)
@@ -1339,6 +1356,11 @@ def iniciar_menu(gestor_cache: Optional[GestorCache] = None) -> None:
                 input("\nPresiona [Enter] para volver al menú...")
             elif opcion == "7":
                 opcion_proyectos_y_documentos(cache)
+            elif opcion.lower() in ("w", "web"):
+                from guarida_manager.web.server import ejecutar_web_hasta_cierre
+
+                ejecutar_web_hasta_cierre(gestor_cache=cache)
+                break
             elif opcion == "8":
                 opcion_logs_sistema()
                 input("Presiona [Enter] para volver al menú...")

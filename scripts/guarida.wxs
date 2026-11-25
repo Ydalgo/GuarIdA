@@ -1,0 +1,53 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="GuarIdA"
+    Manufacturer="GuarIdA Team"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="9F4E8A12-3B7D-4C6E-A123-77C0A8B4E101"
+    Scope="perUser">
+
+    <MajorUpgrade DowngradeErrorMessage="Ya hay instalada una version mas reciente de GuarIdA." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="GuarIdA" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="GuarIdAMenuFolder" Name="GuarIdA" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="MainFeature" Title="GuarIdA Offline" Level="1">
+      <Files Include="$(var.SourceDir)\**" Directory="INSTALLFOLDER" />
+      <ComponentRef Id="AtajosComponente" />
+    </Feature>
+
+    <Component Id="AtajosComponente" Directory="GuarIdAMenuFolder" Guid="4B81C2D0-5E91-4A10-9B22-1234567890AB">
+      <RegistryValue Root="HKCU" Key="Software\GuarIdA" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      <Shortcut
+        Id="AtajoMenuCLI"
+        Name="GuarIdA (Terminal)"
+        Description="Iniciar GuarIdA en modo terminal"
+        Target="[INSTALLFOLDER]Iniciar_GuarIdA.bat"
+        WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut
+        Id="AtajoMenuWeb"
+        Name="GuarIdA (Web)"
+        Description="Iniciar interfaz web local de GuarIdA"
+        Target="[INSTALLFOLDER]Iniciar_Web.bat"
+        WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut
+        Id="AtajoEscritorioCLI"
+        Directory="DesktopFolder"
+        Name="GuarIdA"
+        Description="IA local offline para desarrollo"
+        Target="[INSTALLFOLDER]Iniciar_GuarIdA.bat"
+        WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="LimpiarMenuFolder" On="uninstall" />
+    </Component>
+  </Package>
+</Wix>

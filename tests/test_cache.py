@@ -1,4 +1,5 @@
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -351,6 +352,64 @@ class TestCache(unittest.TestCase):
         self.assertEqual(historial[1]["id"], id_2)
         self.assertEqual(historial[1]["estado"], "activo")
         self.assertIsNone(historial[1]["sustituido_por_id"])
+
+    def test_migracion_automatica_desde_guarida_db_legacy(self):
+        dir_mig = Path(self.directorio_temporal.name) / "migracion"
+        dir_mig.mkdir(parents=True)
+        ruta_legacy = dir_mig / "guarida.db"
+
+        conn = sqlite3.connect(str(ruta_legacy))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE modelos (
+                    id TEXT PRIMARY KEY,
+                    repo_hf TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    ruta_local TEXT NOT NULL,
+                    estado TEXT NOT NULL,
+                    motivo_descarte TEXT,
+                    license TEXT,
+                    training_summary_url TEXT
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO modelos (id, repo_hf, filename, ruta_local, estado)
+                VALUES ('qwen2.5-3b-chat-q4', 'Qwen/Qwen2.5-3B-Instruct-GGUF', 'qwen2.5-3b-instruct-q4_k_m.gguf', '/models/qwen2.5-3b-instruct-q4_k_m.gguf', 'descargado');
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE proyectos (
+                    id TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    descripcion TEXT NOT NULL,
+                    ruta_directorio TEXT NOT NULL,
+                    fecha_creacion TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO proyectos (id, nombre, descripcion, ruta_directorio, fecha_creacion)
+                VALUES ('proy-legacy', 'TIES', 'Manual', '/docs/ties', '2026-11-10T10:00:00+00:00');
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        cache_migrado = GestorCache(dir_mig / "config.db")
+        modelo = cache_migrado.obtener_modelo("qwen2.5-3b-chat-q4")
+        self.assertIsNotNone(modelo)
+        self.assertEqual(modelo["estado"], "descargado")
+        self.assertEqual(modelo["ruta_local"], "/models/qwen2.5-3b-instruct-q4_k_m.gguf")
+
+        proyecto = cache_migrado.obtener_proyecto("proy-legacy")
+        self.assertIsNotNone(proyecto)
+        self.assertEqual(proyecto["nombre"], "TIES")
 
 
 if __name__ == "__main__":

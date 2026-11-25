@@ -28,13 +28,21 @@ wheels/
 .coverage
 htmlcov/
 
-# Local databases & binaries
+# Local databases, portable runtime & binaries
 *.db
 *.sqlite3
 *.log
 bin/
 models/
 .guarida/
+runtime/
+datos/
+dist/
+.portable
+*.zip
+*.msi
+*.wixobj
+*.wixpdb
 repositorio_demo/
 
 # OS specific

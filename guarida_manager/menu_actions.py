@@ -4,9 +4,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from guarida_manager import DIRECTORIO_MODELOS, RUTA_DB_CONFIG_PREDETERMINADA
 from guarida_manager.cache import ConfiguracionOptimaRegistro, GestorCache, ModeloRegistro
 from guarida_manager.downloader.compliance import RegionNormativa
-from guarida_manager.downloader.models import CatalogoModelos, DescargadorModelos
+from guarida_manager.downloader.models import (
+    CatalogoModelos,
+    DescargadorModelos,
+    validar_archivo_gguf,
+)
 from guarida_manager.downloader.provisioning import OrquestadorAprovisionamiento
 from guarida_manager.downloader.tools import GestorHerramientasBunker
 from guarida_manager.engine.server import LlamaServerConfig, GestorLlamaServer
@@ -54,8 +59,46 @@ def listar_perfiles_afinamiento(gestor_cache: GestorCache, hash_hw: str) -> None
         print("-" * 75)
 
 
-def obtener_modelos_locales(gestor_cache: GestorCache) -> list[dict]:
+def obtener_modelos_locales(
+    gestor_cache: GestorCache,
+    directorio_modelos: Optional[Path] = None,
+) -> list[dict]:
     """Obtiene la lista de modelos con archivo descargado y existente en disco."""
+    if (
+        directorio_modelos is not None
+        or getattr(gestor_cache, "ruta_db_config", None) == RUTA_DB_CONFIG_PREDETERMINADA
+    ):
+        dir_mod = directorio_modelos or DIRECTORIO_MODELOS
+        if dir_mod.exists() and dir_mod.is_dir():
+            with gestor_cache.sesion() as conn:
+                regs = conn.execute("SELECT id, ruta_local FROM modelos;").fetchall()
+            rutas_actuales = {r["id"]: str(r["ruta_local"] or "") for r in regs}
+            for m_def in CatalogoModelos.MODELOS.values():
+                ruta_reg = rutas_actuales.get(m_def.id, "")
+                if ruta_reg and Path(ruta_reg).exists() and Path(ruta_reg).is_file():
+                    continue
+                candidato = dir_mod / m_def.filename
+                if not candidato.exists() or not candidato.is_file():
+                    continue
+                try:
+                    if candidato.stat().st_size <= 4:
+                        continue
+                except OSError:
+                    continue
+                if candidato.suffix.lower() == ".gguf" and not validar_archivo_gguf(candidato)[0]:
+                    continue
+                gestor_cache.guardar_modelo(
+                    ModeloRegistro(
+                        id=m_def.id,
+                        repo_hf=m_def.repo_hf,
+                        filename=m_def.filename,
+                        ruta_local=str(candidato),
+                        estado="descargado",
+                        license=m_def.licencia,
+                        training_summary_url=m_def.training_summary_url,
+                    )
+                )
+
     with gestor_cache.sesion() as conn:
         filas = conn.execute(
             "SELECT id, filename, ruta_local, estado FROM modelos WHERE ruta_local != '';"

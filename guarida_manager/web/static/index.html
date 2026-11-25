@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GuarIdA // Antigravity Bunker IDE</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Barra de Comando Superior Estilo Antigravity -->
+    <header class="command-bar">
+      <div class="brand-cluster">
+        <div class="brand-orb" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4" />
+            <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(-28 12 12)" />
+            <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(28 12 12)" />
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">GuarIdA</span>
+          <span class="brand-badge">ANTIGRAVITY BUNKER</span>
+        </div>
+        <span class="pill pill-offline" title="Sin telemetría ni salida a internet">
+          <span class="dot dot-emerald"></span> 100% OFFLINE
+        </span>
+      </div>
+
+      <div class="engine-control-cluster">
+        <label class="select-wrap" title="Pareja recomendada (Modelo Generativo + Motor AST)">
+          <span class="select-label">Pareja</span>
+          <select id="pair-select" aria-label="Pareja recomendada"></select>
+        </label>
+        <button id="btn-start-engine" class="btn btn-primary btn-sm" type="button">
+          Arrancar Motor
+        </button>
+        <button id="btn-stop-engine" class="btn btn-ghost btn-sm" type="button" disabled>
+          Detener
+        </button>
+        <span id="server-status-pill" class="pill pill-muted">
+          <span class="dot dot-muted"></span> DETENIDO
+        </span>
+      </div>
+
+      <div class="telemetry-cluster">
+        <div class="telemetry-mini" id="mini-cpu">CPU <strong>--%</strong></div>
+        <div class="telemetry-mini" id="mini-ram">RAM <strong>--</strong></div>
+        <div class="telemetry-mini" id="mini-vram">VRAM <strong>--</strong></div>
+        <div class="telemetry-mini" id="mini-temp">TEMP <strong>--</strong></div>
+        <button id="btn-privacy-toggle" class="btn btn-outline btn-sm" type="button" title="Alternar modo de privacidad RGPD">
+          Privacidad: <strong id="privacy-mode-label">estandar</strong>
+        </button>
+        <button id="btn-close-web" class="btn btn-ghost btn-sm" type="button" title="Cerrar interfaz web y detener aplicación">
+          Cerrar Web
+        </button>
+      </div>
+    </header>
+
+    <!-- Cuerpo de 3 Paneles + Carril de Actividad -->
+    <div class="workbench">
+      <!-- Carril de Actividad Izquierdo -->
+      <nav class="activity-rail" aria-label="Paneles de exploración">
+        <button class="rail-btn active" data-rail="projects" title="Proyectos y RAG">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+          </svg>
+        </button>
+        <button class="rail-btn" data-rail="sessions" title="Sesiones de Chat">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10z" />
+          </svg>
+        </button>
+        <button class="rail-btn" data-rail="models" title="Modelos y Punto Dulce">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="7" y="7" width="10" height="10" rx="2" />
+            <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
+          </svg>
+        </button>
+        <button class="rail-btn" data-rail="memory" title="Memoria Declarativa y AST">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="6" cy="6" r="3" />
+            <circle cx="18" cy="6" r="3" />
+            <circle cx="12" cy="18" r="3" />
+            <path d="M8.5 7.5L15.5 7.5M7.5 8.5L10.8 15.2M16.5 8.5L13.2 15.2" />
+          </svg>
+        </button>
+        <div class="rail-spacer"></div>
+        <button id="btn-toggle-inspector" class="rail-btn active" title="Mostrar/Ocultar Inspector Derecho">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M15 4v16" />
+          </svg>
+        </button>
+      </nav>
+
+      <!-- Barra Lateral Exploradora -->
+      <aside class="sidebar-panel" id="sidebar-panel">
+        <!-- Vista Proyectos -->
+        <section class="sidebar-view active" id="sidebar-projects">
+          <div class="panel-header">
+            <h2>PROYECTOS &amp; RAG</h2>
+            <div class="panel-actions">
+              <button id="btn-toggle-new-project" class="icon-btn" title="Nuevo proyecto">+</button>
+              <button id="btn-refresh-projects" class="icon-btn" title="Actualizar lista">↻</button>
+            </div>
+          </div>
+
+          <form id="form-new-project" class="inline-form hidden">
+            <input id="proj-name" type="text" placeholder="Nombre del proyecto" required />
+            <input id="proj-path" type="text" placeholder="Ruta absoluta (ej. D:\repo)" required />
+            <input id="proj-desc" type="text" placeholder="Descripción (opcional)" />
+            <div class="inline-form-actions">
+              <button type="submit" class="btn btn-primary btn-xs">Crear e Indexar</button>
+              <button type="button" id="btn-cancel-new-project" class="btn btn-ghost btn-xs">Cancelar</button>
+            </div>
+          </form>
+
+          <div class="section-label">Repositorios Locales</div>
+          <div id="projects-list" class="item-list"></div>
+
+          <div class="section-label row-between">
+            <span>Documentos Indexados</span>
+            <button id="btn-reindex-active" class="btn-link" type="button" title="Reindexar proyecto activo">Reindexar</button>
+          </div>
+          <div id="project-files-list" class="file-tree"></div>
+        </section>
+
+        <!-- Vista Sesiones -->
+        <section class="sidebar-view" id="sidebar-sessions">
+          <div class="panel-header">
+            <h2>SESIONES</h2>
+            <div class="panel-actions">
+              <button id="btn-new-session" class="btn btn-primary btn-xs" type="button">+ Nueva</button>
+            </div>
+          </div>
+          <div id="sessions-list" class="item-list"></div>
+        </section>
+
+        <!-- Vista Modelos Rápida -->
+        <section class="sidebar-view" id="sidebar-models">
+          <div class="panel-header">
+            <h2>MODELOS &amp; PUNTO DULCE</h2>
+            <div class="panel-actions">
+              <button id="btn-tune-all-side" class="btn btn-outline btn-xs" type="button">Afinar</button>
+            </div>
+          </div>
+          <div id="tier-summary-card" class="mini-card"></div>
+          <div class="section-label">Parejas Recomendadas</div>
+          <div id="sidebar-pairs-list" class="item-list"></div>
+          <button id="btn-open-models-tab" class="btn btn-primary btn-sm full-width" type="button">
+            Abrir Catálogo Completo
+          </button>
+        </section>
+
+        <!-- Vista Memoria Declarativa -->
+        <section class="sidebar-view" id="sidebar-memory">
+          <div class="panel-header">
+            <h2>MEMORIA DECLARATIVA</h2>
+            <div class="panel-actions">
+              <label class="checkbox-inline" title="Mostrar hechos sustituidos">
+                <input type="checkbox" id="chk-show-superseded" /> Histórico
+              </label>
+            </div>
+          </div>
+          <form id="form-new-fact" class="inline-form">
+            <input id="fact-subject" type="text" placeholder="Sujeto (ej. puerto_api)" required />
+            <input id="fact-predicate" type="text" placeholder="Predicado (ej. es)" required />
+            <input id="fact-object" type="text" placeholder="Objeto (ej. 8083)" required />
+            <button type="submit" class="btn btn-primary btn-xs full-width">Guardar Hecho Inmutable</button>
+          </form>
+          <div id="sidebar-memory-list" class="item-list"></div>
+        </section>
+      </aside>
+
+      <!-- Lienzo Central (Workspace) -->
+      <main class="workspace-canvas">
+        <div class="workspace-tabs" role="tablist">
+          <button class="tab-btn active" data-tab="chat" role="tab" aria-selected="true">
+            Chat Agéntico
+          </button>
+          <button class="tab-btn" data-tab="ast" role="tab" aria-selected="false">
+            Grafo AST &amp; Documentos
+          </button>
+          <button class="tab-btn" data-tab="catalog" role="tab" aria-selected="false">
+            Catálogo &amp; Punto Dulce
+          </button>
+          <div class="tab-spacer"></div>
+          <span id="active-context-badge" class="context-pill">Sin proyecto activo</span>
+        </div>
+
+        <!-- Tab 1: Chat Agéntico -->
+        <section class="workspace-view active" id="view-chat">
+          <div class="chat-scroll" id="chat-scroll">
+            <div id="chat-hero" class="chat-hero">
+              <div class="hero-orb">
+                <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <circle cx="12" cy="12" r="4" />
+                  <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(-28 12 12)" />
+                  <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(28 12 12)" />
+                </svg>
+              </div>
+              <h1>GuarIdA Local Agent Workspace</h1>
+              <p class="hero-subtitle">
+                Inferencia 100% soberana en tu silicio, búsqueda híbrida AST + BM25 con citas verificables y memoria declarativa inmutable.
+              </p>
+              <div id="hero-tier-badges" class="hero-badges"></div>
+              <div class="quick-prompts">
+                <button class="chip-btn" type="button" data-prompt="Resume la arquitectura principal y módulos clave del proyecto.">
+                  Resumir arquitectura
+                </button>
+                <button class="chip-btn" type="button" data-prompt="/ficheros">
+                  /ficheros
+                </button>
+                <button class="chip-btn" type="button" data-prompt="/recall all">
+                  /recall all
+                </button>
+                <button class="chip-btn" type="button" data-prompt="/rgpd on">
+                  /rgpd on
+                </button>
+              </div>
+            </div>
+            <div id="chat-messages" class="chat-messages"></div>
+          </div>
+
+          <div class="composer-dock">
+            <div class="composer-shortcuts">
+              <button class="cmd-chip" type="button" data-insert="/ficheros">/ficheros</button>
+              <button class="cmd-chip" type="button" data-insert="/remember sujeto | predicado | objeto">/remember</button>
+              <button class="cmd-chip" type="button" data-insert="/recall all">/recall all</button>
+              <button class="cmd-chip" type="button" data-insert="/rgpd on">/rgpd on</button>
+              <span class="shortcut-spacer"></span>
+              <span id="active-session-pill" class="meta-label">Nueva sesión</span>
+            </div>
+            <form id="chat-form" class="composer-box">
+              <textarea
+                id="chat-input"
+                rows="2"
+                placeholder="Pregunta sobre tu repositorio, código, documentos o usa /remember, /recall, /ficheros, /rgpd..."
+              ></textarea>
+              <div class="composer-footer">
+                <div class="composer-meta">
+                  <span id="composer-model-tag" class="tag-chip">Modelo: Auto</span>
+                  <span id="composer-project-tag" class="tag-chip">RAG: Inactivo</span>
+                </div>
+                <button id="btn-send-chat" class="btn btn-primary" type="submit">
+                  Enviar
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- Tab 2: Explorador Grafo AST -->
+        <section class="workspace-view" id="view-ast">
+          <div class="subview-toolbar">
+            <div>
+              <h2>Grafo Relacional AST &amp; Dependencias Multihop</h2>
+              <p class="muted-text">Explora nodos sintácticos extraídos en SQLite y expande relaciones con WITH RECURSIVE.</p>
+            </div>
+            <div class="toolbar-actions">
+              <input id="ast-seed-input" type="text" placeholder="ID o nombre semilla (ej. GestorCache)" />
+              <button id="btn-expand-ast" class="btn btn-primary btn-sm" type="button">Expandir 2-Hops</button>
+            </div>
+          </div>
+          <div class="ast-grid">
+            <div class="card">
+              <div class="card-header">
+                <h3>Nodos AST (<span id="ast-nodes-count">0</span>)</h3>
+              </div>
+              <div id="ast-nodes-container" class="ast-list"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h3>Relaciones &amp; Expansión Recursiva (<span id="ast-edges-count">0</span>)</h3>
+              </div>
+              <div id="ast-expansion-container" class="ast-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 3: Catálogo y Punto Dulce -->
+        <section class="workspace-view" id="view-catalog">
+          <div class="subview-toolbar">
+            <div>
+              <h2>Catálogo de Modelos &amp; Afinador Punto Dulce</h2>
+              <p class="muted-text">Rendimiento estimado o medido para tu hardware, estrategia VRAM y descarga 1-clic.</p>
+            </div>
+            <div class="toolbar-actions">
+              <div class="filter-group" id="catalog-filters">
+                <button class="filter-btn active" data-filter="all" type="button">Todos</button>
+                <button class="filter-btn" data-filter="local" type="button">En disco</button>
+                <button class="filter-btn" data-filter="chat" type="button">Chat</button>
+                <button class="filter-btn" data-filter="coder" type="button">Coder</button>
+                <button class="filter-btn" data-filter="embedding" type="button">Embeddings</button>
+              </div>
+              <button id="btn-tune-all-main" class="btn btn-primary btn-sm" type="button">Auto-Afinar Todos</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead>
+                <tr>
+                  <th>Modelo</th>
+                  <th>Formato</th>
+                  <th>Tamaño</th>
+                  <th>Velocidad</th>
+                  <th>Estrategia VRAM</th>
+                  <th>Punto Dulce</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="catalog-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <!-- Inspector Derecho (Telemetría, Motor, RAG, Memoria) -->
+      <aside class="inspector-panel" id="inspector-panel">
+        <div class="inspector-card">
+          <div class="card-title-row">
+            <h3>MOTOR LLAMA-SERVER</h3>
+            <span id="inspector-srv-badge" class="badge badge-muted">DETENIDO</span>
+          </div>
+          <dl class="kv-list" id="inspector-server-kv">
+            <dt>Modelo</dt><dd id="srv-model">--</dd>
+            <dt>Endpoint</dt><dd id="srv-endpoint">--</dd>
+            <dt>PID / Uptime</dt><dd id="srv-pid">--</dd>
+            <dt>GPU / Ctx</dt><dd id="srv-ngl-ctx">--</dd>
+          </dl>
+        </div>
+
+        <div class="inspector-card">
+          <div class="card-title-row">
+            <h3>TELEMETRÍA DE SILICIO</h3>
+            <span id="inspector-temp-badge" class="badge badge-cyan">-- °C</span>
+          </div>
+          <div class="meter-group">
+            <div class="meter-row">
+              <span>CPU <small id="tel-cpu-cores"></small></span>
+              <span id="tel-cpu-val">--%</span>
+            </div>
+            <div class="meter-bar"><div id="bar-cpu" class="meter-fill fill-indigo"></div></div>
+
+            <div class="meter-row">
+              <span>RAM Sistema</span>
+              <span id="tel-ram-val">--</span>
+            </div>
+            <div class="meter-bar"><div id="bar-ram" class="meter-fill fill-cyan"></div></div>
+
+            <div class="meter-row">
+              <span>VRAM / GTT</span>
+              <span id="tel-vram-val">--</span>
+            </div>
+            <div class="meter-bar"><div id="bar-vram" class="meter-fill fill-violet"></div></div>
+
+            <div class="meter-row">
+              <span>Disco Libre</span>
+              <span id="tel-disk-val">--</span>
+            </div>
+            <div class="meter-bar"><div id="bar-disk" class="meter-fill fill-emerald"></div></div>
+          </div>
+          <div class="hw-footprint">
+            <div id="hw-gpu-name" class="hw-line">--</div>
+            <div id="hw-hash" class="hw-hash">SHA: --</div>
+          </div>
+        </div>
+
+        <div class="inspector-card">
+          <div class="card-title-row">
+            <h3>RAG ÚLTIMO TURNO</h3>
+            <span id="rag-speed-badge" class="badge badge-muted">-- ms</span>
+          </div>
+          <dl class="kv-list" id="inspector-rag-kv">
+            <dt>Evaluados</dt><dd id="rag-eval">0</dd>
+            <dt>Citados</dt><dd id="rag-cited">0</dd>
+            <dt>Top Score</dt><dd id="rag-score">--</dd>
+            <dt>Ctx Tokens</dt><dd id="rag-tokens">0</dd>
+          </dl>
+          <div id="rag-files-chips" class="chips-wrap"></div>
+        </div>
+
+        <div class="inspector-card">
+          <div class="card-title-row">
+            <h3>MEMORIA ACTIVA</h3>
+            <span id="mem-count-badge" class="badge badge-indigo">0</span>
+          </div>
+          <div id="inspector-memory-list" class="compact-memory-list"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

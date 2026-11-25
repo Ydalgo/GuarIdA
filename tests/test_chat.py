@@ -501,6 +501,90 @@ class TestChatTerminal(unittest.TestCase):
             msgs_db = cache_real.obtener_mensajes_sesion(sesiones[0]["id"])
             self.assertEqual(msgs_db[0]["contenido"], "¿Qué puerto usamos?")
 
+    @patch("guarida_manager.downloader.tools.GestorHerramientasBunker.resolver_ruta_ejecutable")
+    def test_chat_recuperacion_conflicto_puerto_sin_degradar_gpu(self, mock_resolver):
+        mock_resolver.return_value = Path("C:/dummy/llama-server.exe")
+        salidas = []
+        entradas = iter(["/quit"])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dir_logs = Path(tmp_dir)
+            mock_srv = MagicMock()
+            mock_srv.esta_activo.return_value = False
+            mock_proc = MagicMock()
+            mock_proc.poll.side_effect = [1, None, None]
+            mock_srv.proceso = mock_proc
+
+            llamadas_srv = {"n": 0}
+
+            def _simular_arranque(cfg, ruta_log=None, **kwargs):
+                llamadas_srv["n"] += 1
+                if llamadas_srv["n"] == 1 and ruta_log is not None:
+                    Path(ruta_log).write_text(
+                        "0.00.093.574 E srv         start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 8083\n",
+                        encoding="utf-8",
+                    )
+
+            mock_srv.iniciar_servidor.side_effect = _simular_arranque
+
+            mock_cli = MagicMock()
+            mock_cli.esta_disponible.side_effect = [False, True, True]
+
+            mock_cfg = MagicMock()
+            mock_cfg.host = "127.0.0.1"
+            mock_cfg.port = 8083
+            mock_cfg.n_gpu_layers = 33
+            mock_cfg.extra_args = []
+            mock_cfg.ctx_size = 4096
+
+            with patch("guarida_manager.chat.DIRECTORIO_LOGS", dir_logs), \
+                 patch("guarida_manager.chat.puerto_esta_disponible", return_value=True), \
+                 patch("guarida_manager.chat.asegurar_puerto_disponible", return_value=8085), \
+                 patch("guarida_manager.menu_actions.obtener_modelos_locales") as mock_loc, \
+                 patch("guarida_manager.engine.server.LlamaServerConfig.desde_afinamiento", return_value=mock_cfg):
+                mock_loc.return_value = [{
+                    "id": "qwen2.5-3b-chat-q4",
+                    "filename": "qwen2.5-3b-instruct-q4_k_m.gguf",
+                    "ruta_local": "C:/dummy/qwen2.5-3b-instruct-q4_k_m.gguf",
+                    "tamano_mb": 2000.0,
+                }]
+
+                ejecutar_chat_terminal(
+                    gestor_cache=self.mock_cache,
+                    gestor_server=mock_srv,
+                    cliente=mock_cli,
+                    modelo_seleccionado="qwen2.5-3b-chat-q4",
+                    input_func=lambda _: next(entradas),
+                    print_func=salidas.append,
+                )
+
+            texto_unido = "\n".join(salidas)
+            self.assertEqual(mock_srv.iniciar_servidor.call_count, 2)
+            self.assertEqual(mock_cfg.n_gpu_layers, 33)
+            self.assertEqual(mock_cfg.port, 8085)
+            self.assertEqual(mock_cli.base_url, "http://127.0.0.1:8085")
+            self.assertIn("Puerto 8083 ocupado o reservado", texto_unido)
+            self.assertNotIn("Inestabilidad o falta de VRAM", texto_unido)
+
+    def test_obtener_modelos_locales_reconcilia_archivos_gguf_en_disco(self):
+        from guarida_manager import menu_actions
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            cache_real = GestorCache(base / "db")
+            dir_modelos = base / "models"
+            dir_modelos.mkdir(parents=True)
+            archivo_gguf = dir_modelos / "qwen2.5-3b-instruct-q4_k_m.gguf"
+            archivo_gguf.write_bytes(b"GGUF\x03\x00\x00\x00" + b"\x00" * 1024)
+
+            locales = menu_actions.obtener_modelos_locales(cache_real, directorio_modelos=dir_modelos)
+            ids = [m["id"] for m in locales]
+            self.assertIn("qwen2.5-3b-chat-q4", ids)
+            reg = cache_real.obtener_modelo("qwen2.5-3b-chat-q4")
+            self.assertIsNotNone(reg)
+            self.assertEqual(reg["estado"], "descargado")
+            self.assertEqual(Path(reg["ruta_local"]), archivo_gguf)
+
 
 if __name__ == "__main__":
     unittest.main()

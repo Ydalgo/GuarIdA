@@ -16,6 +16,7 @@ from guarida_manager.comparator import ComparadorModelosHardware
 from guarida_manager.downloader.models import CatalogoModelos, DefinicionModeloCatalogo, DescargadorModelos
 from guarida_manager.downloader.tools import GestorHerramientasBunker
 from guarida_manager.engine import ClienteLlamaOffline, GestorLlamaServer, LlamaServerConfig
+from guarida_manager.engine.server import asegurar_puerto_disponible, puerto_esta_disponible
 from guarida_manager.hardware import InformacionHardware, obtener_informacion_hardware
 from guarida_manager.logger import obtener_logger
 from guarida_manager.proyectos import GestorProyectos
@@ -32,6 +33,61 @@ _RE_HECHO_NATURAL = re.compile(
     r"(es|usa|utiliza|requiere|vale|est[aá]\s+en|apunta\s+a|depende\s+de)\s+"
     r"([^.\r\n;]+)",
 )
+
+
+def _tamano_archivo_seguro(ruta: Path) -> int:
+    """Devuelve el tamaño en bytes de `ruta`, o 0 si no existe o no es accesible."""
+    try:
+        return ruta.stat().st_size if ruta.exists() else 0
+    except OSError:
+        return 0
+
+
+def _leer_log_desde(ruta: Path, offset: int) -> str:
+    """Lee las últimas líneas no vacías escritas en `ruta` a partir de `offset`."""
+    try:
+        if not ruta.exists() or ruta.stat().st_size <= offset:
+            return ""
+        with open(ruta, "rb") as f_log:
+            f_log.seek(max(0, offset))
+            contenido = f_log.read().decode("utf-8", errors="replace")
+        lineas = [l.strip() for l in contenido.splitlines() if l.strip()]
+        return "\n    ".join(lineas[-6:])
+    except Exception:
+        return ""
+
+
+def _es_error_bind_puerto(detalle_log: str) -> bool:
+    """Detecta si el fallo de llama-server se debe a un puerto bloqueado u ocupado."""
+    low = detalle_log.lower()
+    return any(
+        patron in low
+        for patron in (
+            "couldn't bind",
+            "address already in use",
+            "bind http server socket",
+            "error 10048",
+            "error 10013",
+        )
+    )
+
+
+def _sincronizar_puerto(cfg: Any, cli: Any, host: str, port: int) -> None:
+    """Mantiene alineados puerto y base_url entre la configuración y el cliente HTTP."""
+    cfg.port = port
+    cli.port = port
+    cli.base_url = f"http://{host}:{port}"
+
+
+def _esperar_servidor_chat(srv: Any, cli: Any, intentos: int = 40, pausa_s: float = 0.5) -> bool:
+    """Espera hasta que llama-server responda /health o el proceso termine."""
+    for _ in range(intentos):
+        if cli.esta_disponible():
+            return True
+        if srv.proceso and srv.proceso.poll() is not None:
+            return False
+        time.sleep(pausa_s)
+    return False
 
 
 def extraer_hechos_declarativos(texto: str) -> list[tuple[str, str, str]]:
@@ -748,22 +804,52 @@ def ejecutar_chat_terminal(
                 gestor_cache=cache,
                 api_key=clave_api,
             )
+            host_cfg = cfg.host if isinstance(getattr(cfg, "host", None), str) else "127.0.0.1"
+            port_cfg = (
+                cfg.port
+                if isinstance(getattr(cfg, "port", None), int) and not isinstance(cfg.port, bool)
+                else 8083
+            )
+            if not puerto_esta_disponible(host_cfg, port_cfg):
+                srv.terminar_procesos_huerfanos("llama-server")
+                time.sleep(0.3)
+                port_cfg = asegurar_puerto_disponible(host_cfg, port_cfg)
+            _sincronizar_puerto(cfg, cli, host_cfg, port_cfg)
+
             ruta_log_srv = DIRECTORIO_LOGS / "llama-server.log"
             cli.api_key = clave_api
+            offset_log = _tamano_archivo_seguro(ruta_log_srv)
             srv.iniciar_servidor(cfg, ruta_log=ruta_log_srv)
             servidor_arrancado_por_chat = True
 
-            arranco_ok = False
-            for _ in range(40):
-                if cli.esta_disponible():
-                    arranco_ok = True
-                    break
-                if srv.proceso and srv.proceso.poll() is not None:
-                    break
-                time.sleep(0.5)
+            arranco_ok = _esperar_servidor_chat(srv, cli)
+
+            if not arranco_ok:
+                detalle_intento = _leer_log_desde(ruta_log_srv, offset_log)
+                if _es_error_bind_puerto(detalle_intento):
+                    print_func(
+                        f"[!] Puerto {port_cfg} ocupado o reservado en el sistema. Reasignando a un puerto libre..."
+                    )
+                    logger.warning(
+                        f"Fallo de bind en puerto {port_cfg} para '{modelo_elegido_id}'. Reasignando puerto..."
+                    )
+                    srv.detener_servidor()
+                    time.sleep(0.3)
+                    port_cfg = asegurar_puerto_disponible(
+                        host_cfg, port_cfg + 1, excluir={port_cfg}
+                    )
+                    _sincronizar_puerto(cfg, cli, host_cfg, port_cfg)
+                    offset_log = _tamano_archivo_seguro(ruta_log_srv)
+                    srv.iniciar_servidor(cfg, ruta_log=ruta_log_srv)
+                    arranco_ok = _esperar_servidor_chat(srv, cli)
 
             # Si falló y tenía capas GPU activas, reintentar automáticamente en modo CPU seguro
-            if not arranco_ok and cfg.n_gpu_layers > 0:
+            if (
+                not arranco_ok
+                and isinstance(getattr(cfg, "n_gpu_layers", None), int)
+                and not isinstance(cfg.n_gpu_layers, bool)
+                and cfg.n_gpu_layers > 0
+            ):
                 print_func("[!] Inestabilidad o falta de VRAM en GPU. Reintentando en modo CPU seguro (-ngl 0 -nkvo)...")
                 logger.warning(
                     f"Fallo al arrancar '{modelo_elegido_id}' con {cfg.n_gpu_layers} capas GPU. "
@@ -771,6 +857,8 @@ def ejecutar_chat_terminal(
                 )
                 srv.detener_servidor()
                 time.sleep(0.5)
+                port_cfg = asegurar_puerto_disponible(host_cfg, port_cfg)
+                _sincronizar_puerto(cfg, cli, host_cfg, port_cfg)
                 cfg.n_gpu_layers = 0
                 cfg.ctx_size = min(cfg.ctx_size, 2048)
                 cfg.batch_size = 256
@@ -778,24 +866,12 @@ def ejecutar_chat_terminal(
                 cfg.kv_cache_type = "q8_0"
                 if "-nkvo" not in cfg.extra_args:
                     cfg.extra_args.append("-nkvo")
+                offset_log = _tamano_archivo_seguro(ruta_log_srv)
                 srv.iniciar_servidor(cfg, ruta_log=ruta_log_srv)
-                for _ in range(40):
-                    if cli.esta_disponible():
-                        arranco_ok = True
-                        break
-                    if srv.proceso and srv.proceso.poll() is not None:
-                        break
-                    time.sleep(0.5)
+                arranco_ok = _esperar_servidor_chat(srv, cli)
 
             if not arranco_ok:
-                detalle_err = ""
-                try:
-                    if ruta_log_srv.exists():
-                        with open(ruta_log_srv, "r", encoding="utf-8", errors="replace") as f_log:
-                            lineas = [l.strip() for l in f_log.readlines() if l.strip()]
-                            detalle_err = "\n    ".join(lineas[-6:])
-                except Exception:
-                    pass
+                detalle_err = _leer_log_desde(ruta_log_srv, offset_log) or _leer_log_desde(ruta_log_srv, 0)
                 code = srv.proceso.poll() if srv.proceso else "Timeout"
                 logger.error(
                     f"llama-server no pudo inicializar '{modelo_elegido_id}' (código {code}). Detalle:\n{detalle_err}"

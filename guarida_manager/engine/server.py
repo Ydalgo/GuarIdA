@@ -2,6 +2,7 @@ import atexit
 import os
 import platform
 import secrets
+import socket
 import subprocess
 import time
 import warnings
@@ -71,6 +72,44 @@ def _limpiar_servidores_activos() -> None:
 
 
 atexit.register(_limpiar_servidores_activos)
+
+
+def puerto_esta_disponible(host: str = "127.0.0.1", port: int = 8083) -> bool:
+    """Comprueba mediante connect y bind exclusivo si un puerto TCP está libre."""
+    puerto = int(port)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_conn:
+            s_conn.settimeout(0.15)
+            if s_conn.connect_ex((host, puerto)) == 0:
+                return False
+    except OSError:
+        pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_bind:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                s_bind.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            s_bind.bind((host, puerto))
+            return True
+    except OSError:
+        return False
+
+
+def asegurar_puerto_disponible(
+    host: str = "127.0.0.1",
+    port_preferido: int = 8083,
+    excluir: Optional[set[int]] = None,
+) -> int:
+    """Retorna `port_preferido` si está disponible o busca un puerto TCP libre alternativo."""
+    bloqueados = excluir or set()
+    if port_preferido not in bloqueados and puerto_esta_disponible(host, port_preferido):
+        return port_preferido
+    for candidato in range(8084, 8105):
+        if candidato not in bloqueados and puerto_esta_disponible(host, candidato):
+            return candidato
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_efimero:
+        s_efimero.bind((host, 0))
+        return int(s_efimero.getsockname()[1])
 
 
 @dataclass
@@ -413,9 +452,18 @@ class GestorLlamaServer:
             import psutil
         except ImportError:
             return 0
+        pids_activos = {
+            s._proceso.pid
+            for s in list(_SERVIDORES_ACTIVOS)
+            if s._proceso is not None
+            and s._proceso.poll() is None
+            and isinstance(getattr(s._proceso, "pid", None), int)
+        }
         terminados = 0
         for proc in psutil.process_iter(["pid", "name"]):
             try:
+                if proc.info.get("pid") in pids_activos:
+                    continue
                 nombre_p = proc.info.get("name") or ""
                 if nombre.lower() in nombre_p.lower():
                     proc.kill()
@@ -427,6 +475,7 @@ class GestorLlamaServer:
 
     def detener_servidor(self, timeout: float = 5.0) -> bool:
         """Detiene de forma limpia el proceso llama-server y limpia procesos huérfanos."""
+        _SERVIDORES_ACTIVOS.discard(self)
         if self._proceso:
             proc = self._proceso
             try:
@@ -440,7 +489,6 @@ class GestorLlamaServer:
                 pass
         self.terminar_procesos_huerfanos("llama-server")
 
-        _SERVIDORES_ACTIVOS.discard(self)
         if self._archivo_log:
             try:
                 self._archivo_log.close()

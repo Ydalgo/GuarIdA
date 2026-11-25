@@ -1,6 +1,25 @@
+import os
 from pathlib import Path
 
-DIRECTORIO_RAIZ_GUARIDA = Path.home() / ".guarida"
+
+def resolver_directorio_raiz_guarida() -> Path:
+    """Resuelve la carpeta de datos de GuarIdA (env > modo portable > ~/.guarida)."""
+    env_home = os.environ.get("GUARIDA_HOME", "").strip()
+    if env_home:
+        return Path(env_home).expanduser().resolve()
+
+    raiz_proyecto = Path(__file__).resolve().parent.parent
+    if (
+        (raiz_proyecto / ".portable").exists()
+        or (raiz_proyecto / "runtime").exists()
+        or (raiz_proyecto / "datos").exists()
+    ):
+        return raiz_proyecto / "datos"
+
+    return Path.home() / ".guarida"
+
+
+DIRECTORIO_RAIZ_GUARIDA = resolver_directorio_raiz_guarida()
 DIRECTORIO_BINARIOS = DIRECTORIO_RAIZ_GUARIDA / "bin"
 DIRECTORIO_BINARIOS_CPU = DIRECTORIO_BINARIOS / "cpu"
 DIRECTORIO_BINARIOS_GPU = DIRECTORIO_BINARIOS / "gpu"

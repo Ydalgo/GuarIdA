@@ -540,6 +540,88 @@ class GestorCache:
                 """
             )
 
+        self._migrar_desde_guarida_db_legacy()
+
+    def _migrar_desde_guarida_db_legacy(self) -> None:
+        """Migra de forma idempotente registros desde ~/.guarida/guarida.db hacia las bases segregadas."""
+        if self.ruta_db_config.name != "config.db":
+            return
+        ruta_legacy = self.ruta_db_config.parent / "guarida.db"
+        if not ruta_legacy.exists() or not ruta_legacy.is_file():
+            return
+
+        conn_legacy: Optional[sqlite3.Connection] = None
+        try:
+            conn_legacy = sqlite3.connect(
+                f"{ruta_legacy.resolve().as_uri()}?mode=ro", uri=True, timeout=10.0
+            )
+            conn_legacy.row_factory = sqlite3.Row
+            tablas_legacy = {
+                row[0]
+                for row in conn_legacy.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table';"
+                ).fetchall()
+            }
+
+            def _copiar_grupo(sesion_ctx: Any, tablas: tuple[str, ...]) -> None:
+                presentes = [t for t in tablas if t in tablas_legacy]
+                if not presentes:
+                    return
+                with sesion_ctx() as conn_dest:
+                    for tabla in presentes:
+                        try:
+                            cols_orig = [
+                                r[1]
+                                for r in conn_legacy.execute(f"PRAGMA table_info({tabla});").fetchall()
+                            ]
+                            cols_dest = [
+                                r[1]
+                                for r in conn_dest.execute(f"PRAGMA table_info({tabla});").fetchall()
+                            ]
+                            comunes = [c for c in cols_orig if c in cols_dest]
+                            if not comunes:
+                                continue
+                            cols_sql = ", ".join(comunes)
+                            placeholders = ", ".join("?" for _ in comunes)
+                            filas = conn_legacy.execute(f"SELECT {cols_sql} FROM {tabla};").fetchall()
+                            if filas:
+                                conn_dest.executemany(
+                                    f"INSERT OR IGNORE INTO {tabla} ({cols_sql}) VALUES ({placeholders});",
+                                    [tuple(f[c] for c in comunes) for f in filas],
+                                )
+                        except Exception:
+                            continue
+
+            _copiar_grupo(
+                self.sesion_config,
+                (
+                    "modelos",
+                    "modulos_instalados",
+                    "capacidades_binario",
+                    "benchmarks",
+                    "configuraciones_optimas",
+                    "bench_sesiones",
+                    "bench_configs",
+                    "bench_ejecuciones",
+                ),
+            )
+            _copiar_grupo(
+                self.sesion_proyectos,
+                ("proyectos", "documentos_proyecto", "embeddings_cache"),
+            )
+            _copiar_grupo(
+                self.sesion_chat,
+                ("sesiones_chat",),
+            )
+        except Exception:
+            pass
+        finally:
+            if conn_legacy is not None:
+                try:
+                    conn_legacy.close()
+                except Exception:
+                    pass
+
     def guardar_modelo(self, modelo: ModeloRegistro) -> None:
         with self.sesion() as conexion:
             conexion.execute(

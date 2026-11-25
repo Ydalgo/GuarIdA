@@ -1,5 +1,6 @@
 import io
 import json
+import socket
 import subprocess
 import unittest
 from pathlib import Path
@@ -7,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import urllib.error
 
 from guarida_manager.engine.client import ClienteLlamaOffline, ErrorInferenciaOffline
-from guarida_manager.engine.server import GestorLlamaServer, LlamaServerConfig
+from guarida_manager.engine.server import (
+    GestorLlamaServer,
+    LlamaServerConfig,
+    asegurar_puerto_disponible,
+    puerto_esta_disponible,
+)
 
 
 class TestLlamaServer(unittest.TestCase):
@@ -135,6 +141,17 @@ class TestLlamaServer(unittest.TestCase):
         self.assertTrue(detenido)
         mock_proc.terminate.assert_called_once()
         self.assertFalse(gestor.esta_activo())
+
+    def test_puerto_disponible_y_reasignacion(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_ocupado:
+            s_ocupado.bind(("127.0.0.1", 0))
+            s_ocupado.listen(1)
+            puerto_ocupado = s_ocupado.getsockname()[1]
+
+            self.assertFalse(puerto_esta_disponible("127.0.0.1", puerto_ocupado))
+            nuevo_puerto = asegurar_puerto_disponible("127.0.0.1", puerto_ocupado)
+            self.assertNotEqual(nuevo_puerto, puerto_ocupado)
+            self.assertTrue(puerto_esta_disponible("127.0.0.1", nuevo_puerto))
 
 
 class TestClienteLlamaOffline(unittest.TestCase):

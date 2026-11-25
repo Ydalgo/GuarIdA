@@ -10,15 +10,31 @@
 
 ## Índice
 
+- [Descargas y Versiones en GitHub](#descargas-y-versiones-en-github)
 - [De dónde viene el proyecto](#de-dónde-viene-el-proyecto)
 - [El nombre](#el-nombre)
 - [Qué es y qué no es](#qué-es-y-qué-no-es)
 - [Primer enfoque: programación](#primer-enfoque-programación)
 - [Estado actual: Fase 1 cerrada](#estado-actual-fase-1-cerrada)
 - [Hoja de ruta](#hoja-de-ruta)
-- [Instalación y Uso (Entorno de desarrollo)](#instalación-y-uso-entorno-de-desarrollo)
+- [Instalación y Uso](#instalación-y-uso)
+- [Estructura del proyecto y rutas](#estructura-del-proyecto-y-rutas)
 - [Licencia](#licencia)
 - [Créditos y Agradecimientos](#créditos-y-agradecimientos)
+
+---
+
+## Descargas y Versiones en GitHub
+
+En la sección **Releases** de GitHub y en el repositorio dispones de **tres formatos** según tu necesidad. Ninguno requiere tener Python instalado previamente en el equipo:
+
+| Versión | Archivo en GitHub | Qué incluye | Cuándo usarla |
+|---|---|---|---|
+| **A. Portable (Todo preparado)** | `GuarIdA-Portable-win64-vX.Y.Z.zip` *(Releases)* | Código + Python embebido (`runtime/`) + dependencias + herramientas (`llama-server`, `MinGit`, `ripgrep` en `datos/bin/`). | **Recomendada en Windows 10/11.** Descomprimir y doble clic en `Iniciar_GuarIdA.bat` o `Iniciar_Web.bat`. |
+| **B. Desde cero (Código fuente)** | `git clone` o `Source code (zip)` | Solo código fuente y scripts de instalación (`Instalar_Desde_Cero.bat` / `instalar_desde_cero.sh`). | Para compilar/descargar todo desde el principio en **Windows, Linux o macOS** (los scripts descargan Python portable, dependencias y herramientas). |
+| **C. Instalador MSI Offline** | `GuarIdA-Offline-Setup-x64-vX.Y.Z.msi` *(Releases)* | Todo el paquete preparado dentro de un instalador nativo de Windows sin conexión. | Para instalar en equipos Windows sin internet (crea accesos directos en Menú Inicio y Escritorio en `%LocalAppData%\Programs\GuarIdA`). |
+
+> **Nota sobre modelos `.gguf`:** Debido al límite de 2 GB por archivo en GitHub Releases, los modelos de IA no van incluidos en el `.zip` ni en el `.msi`. Puedes descargarlos una sola vez desde el propio menú de GuarIdA o copiar tus archivos `.gguf` a la carpeta `datos/models/`.
 
 ---
 
@@ -78,24 +94,65 @@ Conclusiones de la comparativa:
 - [ ] **Fase 3: Arnés de agentes y roles** (en curso). Hecho: proyectos, indexación incremental de repositorios/documentos, RAG local con citas y sesiones de chat persistentes (menú `[7]`). Pendiente: orquestación autónoma en bucles iterativos, permisos por rol y aplicación de parches en worktrees de Git.
 - [ ] **Fase 4: Aislamiento del sistema** (sandboxing de herramientas a nivel de sistema operativo).
 
-## Instalación y Uso (Entorno de desarrollo)
+## Instalación y Uso
 
-### 1. Clonar el repositorio y requisitos
-Se requiere Python 3.10 o superior y la librería `psutil`.
+### Opción A: Versión Portable (Windows 11 / Win64, sin instalar nada)
+1. Descarga `GuarIdA-Portable-win64-vX.Y.Z.zip` desde **Releases** y descomprímelo en cualquier carpeta.
+2. Haz doble clic en:
+   - `Iniciar_GuarIdA.bat` para abrir el menú interactivo en terminal.
+   - `Iniciar_Web.bat` para abrir la interfaz web local.
 
-```bash
-git clone git@github.com:Ydalgo/GuarIdA.git
-cd GuarIdA
-pip install psutil
+### Opción B: Desde cero (Windows, Linux y macOS — no requiere Python previo)
+1. Clona o descarga el código fuente:
+   ```bash
+   git clone git@github.com:Ydalgo/GuarIdA.git
+   cd GuarIdA
+   ```
+2. Ejecuta el instalador automático según tu sistema operativo (descarga Python embebido en `runtime/`, instala dependencias y descarga `llama-server`, `git` y `ripgrep` en `datos/bin/`):
+   - **Windows:** doble clic en `Instalar_Desde_Cero.bat` (o directamente `Iniciar_GuarIdA.bat`, que lo lanza si falta `runtime/`).
+   - **Linux / macOS:**
+     ```bash
+     chmod +x *.sh scripts/instalar_unix.sh
+     ./instalar_desde_cero.sh
+     ./iniciar_guarida.sh   # o ./iniciar_web.sh
+     ```
+
+### Opción C: Generar el `.zip` portable o el instalador `.msi` offline
+Si quieres construir los paquetes de distribución desde el repositorio:
+```powershell
+# 1. Generar GuarIdA-Portable-win64-vX.Y.Z.zip en dist\
+powershell -ExecutionPolicy Bypass -File scripts\crear_portable_win64.ps1
+
+# 2. Generar GuarIdA-Offline-Setup-x64-vX.Y.Z.msi en dist\ (requiere WiX Toolset: dotnet tool install --global wix)
+powershell -ExecutionPolicy Bypass -File scripts\crear_msi_offline.ps1
 ```
 
-### 2. Menú de Inicio Interactivo
-Para acceder al panel interactivo de terminal y gestionar diagnósticos, caché y pruebas:
+## Estructura del proyecto y rutas
 
+```text
+GuarIdA/
+├── Iniciar_GuarIdA.bat / iniciar_guarida.sh   # Arranque CLI (usa runtime/ embebido)
+├── Iniciar_Web.bat / iniciar_web.sh           # Arranque Web (usa runtime/ embebido)
+├── Instalar_Desde_Cero.bat / instalar_desde_cero.sh
+├── main.py
+├── guarida_manager/                           # Código fuente del paquete
+├── runtime/                                   # Python embebido + dependencias (ignorado en Git)
+├── datos/                                     # Modo portable: bin/, models/, logs/, *.db, config.json
+├── scripts/                                   # Instaladores internos y generadores de Release (.zip / .msi)
+├── docs/                                      # ADRs y documentación técnica
+└── tests/                                     # Suite de pruebas
+```
+
+**Resolución de rutas (`DIRECTORIO_RAIZ_GUARIDA`):**
+1. Si existe la variable de entorno `GUARIDA_HOME`, se usa esa ruta.
+2. Si existe `.portable`, `runtime/` o `datos/` en la raíz del proyecto (**modo portable**), todo se guarda dentro de `datos/`.
+3. En instalaciones globales con `pip`, se usa `~/.guarida`.
+
+### Uso avanzado (Entorno de desarrollo con Python del sistema)
+Si prefieres usar tu propio Python 3.10+ del sistema en lugar del runtime embebido:
 ```bash
+pip install -e .
 python main.py
-# O también mediante el módulo del paquete:
-python -m guarida_manager
 ```
 
 ### 3. Comandos directos por submódulo
