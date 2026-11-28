@@ -1,0 +1,15 @@
+{
+  "id": "A",
+  "nombre": "Latencia base",
+  "max_tokens": 128,
+  "mensajes": [
+    {
+      "role": "system",
+      "content": "Eres un asistente técnico de programación en Python. Responde en español de forma clara y concisa."
+    },
+    {
+      "role": "user",
+      "content": "Explica brevemente en tres puntos por qué en una arquitectura de inferencia local con GPU integrada y memoria compartida conviene separar la configuración de los hilos de procesamiento de prompt respecto a los hilos de generación de tokens."
+    }
+  ]
+}

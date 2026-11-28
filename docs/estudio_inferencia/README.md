@@ -1,6 +1,6 @@
 # Estudio de arquitectura de inferencia de GuarIdA
 
-> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0, 1, Mini-F1b y 3 cerradas; siguiente orden: **F2 → F4 → F5 → F6**
+> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0, 1, Mini-F1b, 3 y 2 cerradas; siguiente fase: **F4 → F5 → F6**
 >
 > Documento raíz del estudio. Si retomas el trabajo (persona u otro modelo), lee primero [TRASPASO.md](TRASPASO.md).
 
@@ -68,8 +68,8 @@ flowchart LR
 | **F0 · Encuadre** | Fijar objetivo, reglas, fases, inventario inicial y protocolo | Esta carpeta + ADR 0013 (propuesto) | Documentación commiteada en rama de estudio | ✅ Cerrada |
 | **F1 + Mini-F1b · Verificación de fuentes** | Comprobar en cada candidato: existe, licencia real, actividad, SO, backends, soporte Qwen3, formato de pesos, API de servidor, origen de sus benchmarks | Fichas verificadas en [01_inventario_candidatos.md](01_inventario_candidatos.md) y [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Todos los candidatos de prioridad A, B, C y emergentes (`Strata`, `RustingStrata`, `DFlash2`) verificados; `config.json` de Qwen3 confirmados | ✅ Cerrada *(2026-11-28)* |
 | **F3 · Estudio de técnicas** | Leer código y documentación para entender *cómo* consigue cada proyecto su ventaja (T1–T20) | Fichas en [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) y [03b_fichas_tecnicas_apoyo.md](03b_fichas_tecnicas_apoyo.md) + plan N0 para F2 | Cada técnica clasificada (`integrar` / `imitar` / `solo estudiar` / `descartar`) y mapeada a GuarIdA | ✅ Cerrada *(2026-11-28)* |
-| **F2 · Línea base GuarIdA** *(siguiente)* | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (experimentos `N0-1`..`N0-Up` definidos en F3) | Resultados en `resultados/` + resumen | Pruebas A–G ejecutadas en al menos un perfil de hardware real | ⏳ Siguiente |
-| **F4 · Laboratorio de motores** | Ejecutar candidatos verificados con el mismo protocolo, por perfil de hardware | Resultados comparables en `resultados/` | Prioridad A probada en ≥1 perfil; B donde aplique | ⏳ Pendiente |
+| **F2 · Línea base GuarIdA** | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (experimentos `N0-1`..`N0-Up` definidos en F3) | [04_resultados_f2_linea_base.md](04_resultados_f2_linea_base.md) + [resultados JSONL](resultados/2026-11-28_731271e2_llama-b12017.jsonl) + [bench_estudio_f2.py](../../herramientas/bench_estudio_f2.py) | Pruebas A–C, F, G y Q ejecutadas en Perfil B real (88 mediciones sin errores; pendiente `N0-5`/`N0-Up` al tener Qwen3/`v1.0.0+`) | ✅ Cerrada *(2026-11-28)* |
+| **F4 · Laboratorio de motores** *(siguiente)* | Ejecutar candidatos verificados con el mismo protocolo, por perfil de hardware | Resultados comparables en `resultados/` | Prioridad A probada en ≥1 perfil; B donde aplique | ⏳ Siguiente |
 | **F5 · Síntesis y decisión** | Matriz de decisión ponderada y elección por niveles | ADR 0014 (decisión) | ADR aceptado por el responsable del proyecto | ⏳ Pendiente |
 | **F6 · Prototipo de integración** | Implementar lo decidido (p. ej. interfaz de motores + planificador) | Código + tests en rama propia | Tests verdes y mejora medida frente a F2 | ⏳ Pendiente |
 
@@ -95,8 +95,10 @@ La decisión final no tiene por qué ser "cambiar de motor". Se clasificará cad
 | [02_protocolo_benchmark.md](02_protocolo_benchmark.md) | Perfiles de hardware, modelos, pruebas, métricas y formato de resultados |
 | [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) | Tabla T1–T20, fichas principales, plan N0 para F2 y base arquitectónica F5/F6 |
 | [03b_fichas_tecnicas_apoyo.md](03b_fichas_tecnicas_apoyo.md) | Fichas completas de apoyo (`T1`, `T2`, `T3`, `T5`, `T11–T15`, `T17`) |
+| [04_resultados_f2_linea_base.md](04_resultados_f2_linea_base.md) | Informe de resultados reales de Fase 2 (Perfil B i5-1135G7 + Iris Xe Vulkan) |
 | [../adr/0013-estudio-arquitectura-inferencia.md](../adr/0013-estudio-arquitectura-inferencia.md) | ADR propuesto que abre el estudio |
-| `resultados/` | (se crea en F2) mediciones en bruto y resúmenes |
+| [resultados/](resultados/) | Prompts versionados (`prompts/`) y mediciones JSONL (`2026-11-28_731271e2_llama-b12017.jsonl`) |
+| [bench_estudio_f2.py](../../herramientas/bench_estudio_f2.py) | Runner reproducible y reanudable para F2 y F4 |
 
 ## 7. Fuentes de partida
 

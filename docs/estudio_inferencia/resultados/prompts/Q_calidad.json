@@ -1,0 +1,41 @@
+{
+  "id": "Q",
+  "nombre": "Puerta de calidad",
+  "max_tokens": 192,
+  "casos": [
+    {
+      "id": "Q_json",
+      "tipo": "json",
+      "claves_requeridas": [
+        "motor",
+        "soporta_vulkan",
+        "puertos"
+      ],
+      "mensajes": [
+        {
+          "role": "system",
+          "content": "Responde únicamente con un objeto JSON válido, sin texto adicional ni bloques markdown."
+        },
+        {
+          "role": "user",
+          "content": "Devuelve un JSON con las claves \"motor\" (string \"llama.cpp\"), \"soporta_vulkan\" (booleano true) y \"puertos\" (lista [8080, 8083])."
+        }
+      ]
+    },
+    {
+      "id": "Q_python",
+      "tipo": "python_ast",
+      "funcion_requerida": "sumar_pares",
+      "mensajes": [
+        {
+          "role": "system",
+          "content": "Responde únicamente con código Python válido sin texto ni explicaciones."
+        },
+        {
+          "role": "user",
+          "content": "Escribe una función Python llamada `sumar_pares(numeros: list[int]) -> int` que devuelva la suma de los números pares de la lista."
+        }
+      ]
+    }
+  ]
+}
