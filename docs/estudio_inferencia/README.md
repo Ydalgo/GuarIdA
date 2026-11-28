@@ -1,6 +1,6 @@
 # Estudio de arquitectura de inferencia de GuarIdA
 
-> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0, 1 y Mini-F1b cerradas; siguiente orden: **F3 → F2 → F4 → F5 → F6**
+> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0, 1, Mini-F1b y 3 cerradas; siguiente orden: **F2 → F4 → F5 → F6**
 >
 > Documento raíz del estudio. Si retomas el trabajo (persona u otro modelo), lee primero [TRASPASO.md](TRASPASO.md).
 
@@ -67,8 +67,8 @@ flowchart LR
 |---|---|---|---|---|
 | **F0 · Encuadre** | Fijar objetivo, reglas, fases, inventario inicial y protocolo | Esta carpeta + ADR 0013 (propuesto) | Documentación commiteada en rama de estudio | ✅ Cerrada |
 | **F1 + Mini-F1b · Verificación de fuentes** | Comprobar en cada candidato: existe, licencia real, actividad, SO, backends, soporte Qwen3, formato de pesos, API de servidor, origen de sus benchmarks | Fichas verificadas en [01_inventario_candidatos.md](01_inventario_candidatos.md) y [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Todos los candidatos de prioridad A, B, C y emergentes (`Strata`, `RustingStrata`, `DFlash2`) verificados; `config.json` de Qwen3 confirmados | ✅ Cerrada *(2026-11-28)* |
-| **F3 · Estudio de técnicas** *(siguiente)* | Leer código y documentación para entender *cómo* consigue cada proyecto su ventaja (T6, T7–T9/DFlash2, T10 MoE, T4/T18/T19) | Fichas en [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) con aplicabilidad a GuarIdA | Cada técnica clasificada como integrar / imitar / solo estudiar / descartar | ⏳ Siguiente |
-| **F2 · Línea base GuarIdA** *(después de F3)* | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (flags ya soportadas y las identificadas en F3) | Resultados en `resultados/` + resumen | Pruebas A–G ejecutadas en al menos un perfil de hardware real | ⏳ Pendiente |
+| **F3 · Estudio de técnicas** | Leer código y documentación para entender *cómo* consigue cada proyecto su ventaja (T1–T20) | Fichas en [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) y [03b_fichas_tecnicas_apoyo.md](03b_fichas_tecnicas_apoyo.md) + plan N0 para F2 | Cada técnica clasificada (`integrar` / `imitar` / `solo estudiar` / `descartar`) y mapeada a GuarIdA | ✅ Cerrada *(2026-11-28)* |
+| **F2 · Línea base GuarIdA** *(siguiente)* | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (experimentos `N0-1`..`N0-Up` definidos en F3) | Resultados en `resultados/` + resumen | Pruebas A–G ejecutadas en al menos un perfil de hardware real | ⏳ Siguiente |
 | **F4 · Laboratorio de motores** | Ejecutar candidatos verificados con el mismo protocolo, por perfil de hardware | Resultados comparables en `resultados/` | Prioridad A probada en ≥1 perfil; B donde aplique | ⏳ Pendiente |
 | **F5 · Síntesis y decisión** | Matriz de decisión ponderada y elección por niveles | ADR 0014 (decisión) | ADR aceptado por el responsable del proyecto | ⏳ Pendiente |
 | **F6 · Prototipo de integración** | Implementar lo decidido (p. ej. interfaz de motores + planificador) | Código + tests en rama propia | Tests verdes y mejora medida frente a F2 | ⏳ Pendiente |
@@ -93,7 +93,8 @@ La decisión final no tiene por qué ser "cambiar de motor". Se clasificará cad
 | [01_inventario_candidatos.md](01_inventario_candidatos.md) | Candidatos verificados en F1, fichas primarias, registro de afirmaciones y correcciones |
 | [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Síntesis de `awesome-local-inference-recipes`, 12 proyectos emergentes, 4 modelos recientes y mapa del `LLM-Inference-Handbook` |
 | [02_protocolo_benchmark.md](02_protocolo_benchmark.md) | Perfiles de hardware, modelos, pruebas, métricas y formato de resultados |
-| [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) | Técnicas de optimización, dónde estudiarlas y su posible encaje en GuarIdA |
+| [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) | Tabla T1–T20, fichas principales, plan N0 para F2 y base arquitectónica F5/F6 |
+| [03b_fichas_tecnicas_apoyo.md](03b_fichas_tecnicas_apoyo.md) | Fichas completas de apoyo (`T1`, `T2`, `T3`, `T5`, `T11–T15`, `T17`) |
 | [../adr/0013-estudio-arquitectura-inferencia.md](../adr/0013-estudio-arquitectura-inferencia.md) | ADR propuesto que abre el estudio |
 | `resultados/` | (se crea en F2) mediciones en bruto y resúmenes |
 
