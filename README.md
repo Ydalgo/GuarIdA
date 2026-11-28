@@ -17,6 +17,7 @@
 - [Primer enfoque: programación](#primer-enfoque-programación)
 - [Estado actual: Fase 1 cerrada](#estado-actual-fase-1-cerrada)
 - [Hoja de ruta](#hoja-de-ruta)
+- [Ramas activas y líneas de evolución](#ramas-activas-y-líneas-de-evolución)
 - [Instalación y Uso](#instalación-y-uso)
 - [Estructura del proyecto y rutas](#estructura-del-proyecto-y-rutas)
 - [Licencia](#licencia)
@@ -93,6 +94,17 @@ Conclusiones de la comparativa:
 - [x] **Fase 2: Motor de inferencia local, Punto Dulce y Árbol de Nodos AST** (levantamiento autónomo de `llama-server` con perfiles óptimos de SQLite, afinador empírico por etapas, indexación AST + compresión BPE + búsqueda híbrida RRF y comparativa cara a cara `Qwen2.5` vs `Qwen3`).
 - [ ] **Fase 3: Arnés de agentes y roles** (en curso). Hecho: proyectos, indexación incremental de repositorios/documentos, RAG local con citas y sesiones de chat persistentes (menú `[7]`). Pendiente: orquestación autónoma en bucles iterativos, permisos por rol y aplicación de parches en worktrees de Git.
 - [ ] **Fase 4: Aislamiento del sistema** (sandboxing de herramientas a nivel de sistema operativo).
+- [ ] **Horizonte futuro (Fase 5+ · Visión conceptual):** aprendizaje adaptativo local escalonado por hardware (memoria procedimental, Multi-LoRA, QLoRA opcional) y evolución a red de agentes multimodales agnóstica de dominio. Documentación en la rama [vision/aprendizaje-y-agentes](https://github.com/Ydalgo/GuarIdA/blob/vision/aprendizaje-y-agentes/docs/vision_futura/README.md).
+
+## Ramas activas y líneas de evolución
+
+Además de `main` (línea estable y desarrollo principal de las Fases 1–4), el proyecto mantiene ramas independientes para estudios empíricos y diseños de futuro. De este modo se investiga y documenta en paralelo sin inestabilizar el núcleo ni dispersar el foco principal:
+
+| Rama | Enlace directo | Estado | Por qué ha nacido |
+|---|---|---|---|
+| `main` | [Ver rama](https://github.com/Ydalgo/GuarIdA/tree/main) | Activa (base) | Línea principal del búnker offline: diagnóstico de hardware, motor de inferencia, RAG/AST y avance ordenado de las Fases 1–4. |
+| `estudio/motores-inferencia` | [Ver rama](https://github.com/Ydalgo/GuarIdA/tree/estudio/motores-inferencia) · [Documentación](https://github.com/Ydalgo/GuarIdA/blob/estudio/motores-inferencia/docs/estudio_inferencia/README.md) | En curso (F4) | Nace para investigar y medir empíricamente si `llama-server` puede exprimirse más o complementarse con otros motores y técnicas (KV cuantizada, decodificación especulativa, reparto MoE, motores enchufables) bajo la carga real de GuarIdA en hardware doméstico antes de decidir el siguiente paso de arquitectura (futuro ADR 0014). |
+| `vision/aprendizaje-y-agentes` | [Ver rama](https://github.com/Ydalgo/GuarIdA/tree/vision/aprendizaje-y-agentes) · [Documentación](https://github.com/Ydalgo/GuarIdA/blob/vision/aprendizaje-y-agentes/docs/vision_futura/README.md) | Visión futura (Fase 5+) | Nace para documentar y madurar dos líneas estratégicas sin mezclarlas con la entrega actual: (1) aprendizaje adaptativo local dependiente del hardware más allá del RAG (memoria procedimental, Multi-LoRA, QLoRA opcional/LAN) y (2) evolución desde un enfoque solo *coder* hacia un núcleo agnóstico capaz de orquestar redes de agentes multimodales (audio, imagen, vídeo, visión, código y ejecución). |
 
 ## Instalación y Uso
 
