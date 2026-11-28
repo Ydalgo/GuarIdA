@@ -14,12 +14,12 @@
 
 Los perfiles A y B son el público principal de GuarIdA; C y D sirven para no diseñar algo que solo funcione en una máquina.
 
-| Perfil | Hardware tipo | Modelos | Candidatos típicos |
+| Perfil | Hardware tipo | Modelos | Candidatos verificados en F1 |
 |---|---|---|---|
-| **A · CPU modesta** | ≤32 GB RAM, sin GPU dedicada (Windows 11 y Linux) | Qwen3-0.6B, Qwen3-4B | llama.cpp, ik_llama.cpp, DynaLM, OpenVINO (Intel), mistral.rs, Herbert-rs |
-| **B · APU / iGPU** | 32–64 GB RAM compartida, AMD APU o Intel iGPU (Vulkan / GTT) | Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B si cabe | llama.cpp Vulkan, ik_llama.cpp, OpenVINO GPU (Intel), MLC Vulkan, Golem |
-| **C · GPU media** | 8–16 GB VRAM (NVIDIA o AMD) + 32–64 GB RAM | Qwen3-8B, Qwen3-30B-A3B | llama.cpp (`-ot`/`--n-cpu-moe`), ik_llama.cpp, Ghost Infer, KTransformers, MLC, FastLLM |
-| **D · GPU potente** | ≥16 GB VRAM + ≥64 GB RAM | Qwen3-30B-A3B (y BF16 si cabe) | llama.cpp, KTransformers, SGLang/vLLM (solo para el estudio de técnicas) |
+| **A · CPU modesta** | ≤32 GB RAM, sin GPU dedicada (Windows 11 y Linux) | Qwen3-0.6B, Qwen3-4B | `llama.cpp`, `ik_llama.cpp` (compilar), `mistral.rs`, `OpenVINO GenAI`, `DynaLM` (exploratorio) |
+| **B · APU / iGPU** | 32–64 GB RAM compartida, AMD APU o Intel iGPU (Vulkan / GTT) | Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B si cabe | `llama.cpp` Vulkan, `OpenVINO GenAI` (solo Intel iGPU/NPU), `MLC LLM` Vulkan (acotado, sin CPU), `DynaLM` Vulkan (exploratorio) |
+| **C · GPU media** | 8–16 GB VRAM (NVIDIA o AMD) + 32–64 GB RAM | Qwen3-8B, Qwen3-30B-A3B (o Qwen3.6-35B-A3B) | `llama.cpp` (`-ot`/`--n-cpu-moe`), `ik_llama.cpp` (CUDA), `mistral.rs` (Linux CUDA `sm80+`), `MLC LLM` Vulkan; *(pendiente F1b: `Strata`/`RustingStrata`)* |
+| **D · GPU potente** | ≥16 GB VRAM + ≥64 GB RAM | Qwen3-30B-A3B (y BF16 si cabe) | `llama.cpp`, `ik_llama.cpp` (CUDA), `mistral.rs` (Linux CUDA `sm80+`) |
 
 Para cada equipo se guarda la ficha de hardware que ya genera GuarIdA (`hash_hardware`, CPU, núcleos/hilos, extensiones SIMD, RAM y velocidad, GPU, VRAM/GTT, SO, versión del controlador) más la versión o commit exacto de cada motor.
 
@@ -38,22 +38,23 @@ Cuantización de referencia: **Q4_K_M GGUF** (más Q8_0 como referencia de calid
 
 \[ M_{KV}/\text{token} = 2 \cdot L \cdot H_{kv} \cdot D \cdot B \]
 
-Valores de arquitectura **a confirmar contra el `config.json` oficial en F1**:
+Valores de arquitectura **verificados el 2026-11-28 contra el `config.json` oficial en Hugging Face** (`max_position_embeddings=40960` en los cuatro modelos; `Qwen3-30B-A3B` confirmado con 128 expertos y 8 activos por token):
 
-| Modelo | Capas \(L\) | Cabezas KV \(H_{kv}\) | \(D\) | KV/token FP16 | 4k ctx | 16k ctx | 32k ctx |
+| Modelo | Capas \(L\) | Cabezas Q / KV | \(D\) | KV/token FP16 | 4k ctx | 16k ctx | 32k ctx |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3-0.6B | 28 | 8 | 128 | 112 KiB | 448 MiB | 1,75 GiB | 3,5 GiB |
-| Qwen3-4B | 36 | 8 | 128 | 144 KiB | 576 MiB | 2,25 GiB | 4,5 GiB |
-| Qwen3-8B | 36 | 8 | 128 | 144 KiB | 576 MiB | 2,25 GiB | 4,5 GiB |
-| Qwen3-30B-A3B | 48 | 4 | 128 | 96 KiB | 384 MiB | 1,5 GiB | 3 GiB |
+| Qwen3-0.6B | 28 | 16 / 8 | 128 | 112 KiB | 448 MiB | 1,75 GiB | 3,5 GiB |
+| Qwen3-4B | 36 | 32 / 8 | 128 | 144 KiB | 576 MiB | 2,25 GiB | 4,5 GiB |
+| Qwen3-8B | 36 | 32 / 8 | 128 | 144 KiB | 576 MiB | 2,25 GiB | 4,5 GiB |
+| Qwen3-30B-A3B | 48 | 32 / 4 | 128 | 96 KiB | 384 MiB | 1,5 GiB | 3 GiB |
 
 Con KV `q8_0` el tamaño baja aproximadamente a la mitad (≈0,53×). En una APU con memoria compartida, esta memoria compite directamente con los pesos.
 
-### Erratas detectadas en la conversación previa
+### Erratas detectadas en la conversación previa (verificadas en F1)
 
-- **Qwen3-30B-A3B tiene 48 capas, no 24** (según la ficha oficial del modelo; confirmar en F1). Por eso la tabla de KV-cache de la conversación previa (96 MiB a 2k tokens, 1,5 GiB a 32k) **se queda en la mitad**: el valor correcto es ≈192 MiB a 2k y ≈3 GiB a 32k.
-- La propia conversación rectificó la arquitectura atribuida a DynaLM (DynaCore/DynaIR): no usar esa descripción.
-- Nombres de modelo como "Qwen3.6-35B-A3B", "Qwen3.8-27B" o "Qwen3.8-Flash-Next" deben confirmarse antes de usarlos en el laboratorio.
+- **Confirmado: `Qwen3-30B-A3B` tiene 48 capas, no 24** (`num_hidden_layers: 48` en `Qwen/Qwen3-30B-A3B/config.json`). La tabla de KV-cache de la conversación previa (96 MiB a 2k tokens, 1,5 GiB a 32k) **se queda en la mitad**; lo real es ≈192 MiB a 2k y ≈3 GiB a 32k.
+- La propia conversación rectificó la arquitectura atribuida a DynaLM (DynaCore/DynaIR): ver ficha verificada en [01_inventario_candidatos.md](01_inventario_candidatos.md).
+- **Confirmados como existentes en Hugging Face:** `Qwen3.6-35B-A3B`, `Qwen3.8-27B`, `Qwen3.8-Flash-Next` y `Ternary-Bonsai-2-27B` (y `2.5-27B`). Si se incorporan a F4 se registrará su `config.json` y `sha256` igual que en el resto.
+- **Trampa de inflación de tokens en razonamiento:** al comparar cuantizaciones agresivas (p. ej. Q2/Q3/ternarias) en modelos con modo *thinking*, medir **tiempo total hasta respuesta correcta** y longitud generada, no solo `tok/s`, para detectar degradación que alarga el razonamiento.
 
 ## 4. Pruebas
 

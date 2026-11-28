@@ -1,6 +1,6 @@
 # Estudio de arquitectura de inferencia de GuarIdA
 
-> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fase 0 cerrada, Fase 1 pendiente
+> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0 y 1 cerradas; Fases 2 y 3 pendientes (más F1b opcional para `Strata`/`RustingStrata`)
 >
 > Documento raíz del estudio. Si retomas el trabajo (persona u otro modelo), lee primero [TRASPASO.md](TRASPASO.md).
 
@@ -67,7 +67,7 @@ flowchart LR
 | Fase | Objetivo | Entregable | Criterio de salida | Estado |
 |---|---|---|---|---|
 | **F0 · Encuadre** | Fijar objetivo, reglas, fases, inventario inicial y protocolo | Esta carpeta + ADR 0013 (propuesto) | Documentación commiteada en rama de estudio | ✅ Cerrada |
-| **F1 · Verificación de fuentes** | Comprobar en cada candidato: existe, licencia real, actividad, SO, backends, soporte Qwen3, formato de pesos, API de servidor, origen de sus benchmarks | Fichas en [01_inventario_candidatos.md](01_inventario_candidatos.md) con estado `verificado` / `descartado` / `no encontrado` | Todos los candidatos de prioridad A y B con ficha verificada | ⏳ Pendiente |
+| **F1 · Verificación de fuentes** | Comprobar en cada candidato: existe, licencia real, actividad, SO, backends, soporte Qwen3, formato de pesos, API de servidor, origen de sus benchmarks | Fichas verificadas en [01_inventario_candidatos.md](01_inventario_candidatos.md) y [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Todos los candidatos de prioridad A, B y C verificados; `config.json` de Qwen3 confirmados | ✅ Cerrada *(2026-11-28; F1b opcional: `Strata`/`RustingStrata`)* |
 | **F2 · Línea base GuarIdA** | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (flags ya soportadas y no explotadas) | Resultados en `resultados/` + resumen | Pruebas A–G ejecutadas en al menos un perfil de hardware real | ⏳ Pendiente |
 | **F3 · Estudio de técnicas** | Leer código y documentación para entender *cómo* consigue cada proyecto su ventaja | Fichas en [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) con aplicabilidad a GuarIdA | Cada técnica clasificada como integrar / imitar / solo estudiar / descartar | ⏳ Pendiente (puede ir en paralelo a F2) |
 | **F4 · Laboratorio de motores** | Ejecutar candidatos verificados con el mismo protocolo, por perfil de hardware | Resultados comparables en `resultados/` | Prioridad A probada en ≥1 perfil; B donde aplique | ⏳ Pendiente |
@@ -91,7 +91,8 @@ La decisión final no tiene por qué ser "cambiar de motor". Se clasificará cad
 | Documento | Contenido |
 |---|---|
 | [TRASPASO.md](TRASPASO.md) | Estado, siguiente tarea concreta y reglas para quien retome |
-| [01_inventario_candidatos.md](01_inventario_candidatos.md) | Todos los proyectos citados, clasificados por línea y prioridad, con lo que hay que verificar |
+| [01_inventario_candidatos.md](01_inventario_candidatos.md) | Candidatos verificados en F1, fichas primarias, registro de afirmaciones y correcciones |
+| [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Síntesis de `awesome-local-inference-recipes`, 12 proyectos emergentes, 4 modelos recientes y mapa del `LLM-Inference-Handbook` |
 | [02_protocolo_benchmark.md](02_protocolo_benchmark.md) | Perfiles de hardware, modelos, pruebas, métricas y formato de resultados |
 | [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) | Técnicas de optimización, dónde estudiarlas y su posible encaje en GuarIdA |
 | [../adr/0013-estudio-arquitectura-inferencia.md](../adr/0013-estudio-arquitectura-inferencia.md) | ADR propuesto que abre el estudio |
