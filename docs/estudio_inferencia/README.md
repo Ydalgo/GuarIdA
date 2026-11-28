@@ -1,6 +1,6 @@
 # Estudio de arquitectura de inferencia de GuarIdA
 
-> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0 y 1 cerradas; Fases 2 y 3 pendientes (más F1b opcional para `Strata`/`RustingStrata`)
+> **Rama:** `estudio/motores-inferencia` · **Inicio:** 2026-11-28 · **Estado global:** Fases 0, 1 y Mini-F1b cerradas; siguiente orden: **F3 → F2 → F4 → F5 → F6**
 >
 > Documento raíz del estudio. Si retomas el trabajo (persona u otro modelo), lee primero [TRASPASO.md](TRASPASO.md).
 
@@ -55,11 +55,10 @@ Observaciones previas (a confirmar en Fase 2):
 
 ```mermaid
 flowchart LR
-  F0["F0 Encuadre"] --> F1["F1 Verificación de fuentes"]
-  F1 --> F2["F2 Línea base GuarIdA"]
+  F0["F0 Encuadre"] --> F1["F1 + Mini-F1b Fuentes"]
   F1 --> F3["F3 Estudio de técnicas"]
+  F3 --> F2["F2 Línea base GuarIdA"]
   F2 --> F4["F4 Laboratorio de motores"]
-  F3 --> F4
   F4 --> F5["F5 Síntesis y decisión (ADR)"]
   F5 --> F6["F6 Prototipo de integración"]
 ```
@@ -67,9 +66,9 @@ flowchart LR
 | Fase | Objetivo | Entregable | Criterio de salida | Estado |
 |---|---|---|---|---|
 | **F0 · Encuadre** | Fijar objetivo, reglas, fases, inventario inicial y protocolo | Esta carpeta + ADR 0013 (propuesto) | Documentación commiteada en rama de estudio | ✅ Cerrada |
-| **F1 · Verificación de fuentes** | Comprobar en cada candidato: existe, licencia real, actividad, SO, backends, soporte Qwen3, formato de pesos, API de servidor, origen de sus benchmarks | Fichas verificadas en [01_inventario_candidatos.md](01_inventario_candidatos.md) y [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Todos los candidatos de prioridad A, B y C verificados; `config.json` de Qwen3 confirmados | ✅ Cerrada *(2026-11-28; F1b opcional: `Strata`/`RustingStrata`)* |
-| **F2 · Línea base GuarIdA** | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (flags ya soportadas y no explotadas) | Resultados en `resultados/` + resumen | Pruebas A–G ejecutadas en al menos un perfil de hardware real | ⏳ Pendiente |
-| **F3 · Estudio de técnicas** | Leer código y documentación para entender *cómo* consigue cada proyecto su ventaja | Fichas en [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) con aplicabilidad a GuarIdA | Cada técnica clasificada como integrar / imitar / solo estudiar / descartar | ⏳ Pendiente (puede ir en paralelo a F2) |
+| **F1 + Mini-F1b · Verificación de fuentes** | Comprobar en cada candidato: existe, licencia real, actividad, SO, backends, soporte Qwen3, formato de pesos, API de servidor, origen de sus benchmarks | Fichas verificadas en [01_inventario_candidatos.md](01_inventario_candidatos.md) y [01b_agregador_y_manual.md](01b_agregador_y_manual.md) | Todos los candidatos de prioridad A, B, C y emergentes (`Strata`, `RustingStrata`, `DFlash2`) verificados; `config.json` de Qwen3 confirmados | ✅ Cerrada *(2026-11-28)* |
+| **F3 · Estudio de técnicas** *(siguiente)* | Leer código y documentación para entender *cómo* consigue cada proyecto su ventaja (T6, T7–T9/DFlash2, T10 MoE, T4/T18/T19) | Fichas en [03_catalogo_tecnicas.md](03_catalogo_tecnicas.md) con aplicabilidad a GuarIdA | Cada técnica clasificada como integrar / imitar / solo estudiar / descartar | ⏳ Siguiente |
+| **F2 · Línea base GuarIdA** *(después de F3)* | Medir el `llama-server` actual con el protocolo, incluyendo el "Nivel 0" (flags ya soportadas y las identificadas en F3) | Resultados en `resultados/` + resumen | Pruebas A–G ejecutadas en al menos un perfil de hardware real | ⏳ Pendiente |
 | **F4 · Laboratorio de motores** | Ejecutar candidatos verificados con el mismo protocolo, por perfil de hardware | Resultados comparables en `resultados/` | Prioridad A probada en ≥1 perfil; B donde aplique | ⏳ Pendiente |
 | **F5 · Síntesis y decisión** | Matriz de decisión ponderada y elección por niveles | ADR 0014 (decisión) | ADR aceptado por el responsable del proyecto | ⏳ Pendiente |
 | **F6 · Prototipo de integración** | Implementar lo decidido (p. ej. interfaz de motores + planificador) | Código + tests en rama propia | Tests verdes y mejora medida frente a F2 | ⏳ Pendiente |

@@ -1,11 +1,11 @@
 # 01 · Inventario de candidatos
 
-> **Estado:** **Fase 1 cerrada (2026-11-28).** Metadatos, licencias, actividad, SO, backends y soporte verificados contra fuentes primarias (API de GitHub, `README.md`, `releases` y documentación oficial). Las cifras de rendimiento se mantienen etiquetadas como **afirmaciones del autor** hasta reproducirse en F4. Ver también [01b_agregador_y_manual.md](01b_agregador_y_manual.md) para el agregador `awesome-local-inference-recipes`, los 12 proyectos sin enlace y el índice del `LLM-Inference-Handbook`.
+> **Estado:** **Fase 1 y Mini-F1b cerradas (2026-11-28).** Metadatos, licencias, actividad, SO, backends y soporte verificados contra fuentes primarias (API de GitHub, `README.md`, `releases`, `LICENSE.md` y documentación oficial). Las cifras de rendimiento se mantienen etiquetadas como **afirmaciones del autor** hasta reproducirse en F4. Ver también [01b_agregador_y_manual.md](01b_agregador_y_manual.md) para el agregador `awesome-local-inference-recipes`, los 12 proyectos sin enlace y el índice del `LLM-Inference-Handbook`.
 
 ## Leyenda
 
 - **Línea:** `L` = motor ligero (pocos recursos, CPU/iGPU) · `R` = alto rendimiento (CUDA/Vulkan/ROCm) · `X` = experimental o arquitectura especializada · `T` = referencia teórica o recopilatorio.
-- **Decisión F1:** `F4` = probar en laboratorio · `F3` = solo estudiar técnicas · `descartar` = fuera de alcance · `F1b` = candidato descubierto en F1 pendiente de ficha propia si interesa.
+- **Decisión F1:** `F4` = probar en laboratorio · `F3` = solo estudiar técnicas · `descartar` = fuera de alcance.
 - **Nivel GuarIdA:** `N0` exprimir `llama-server` · `N1` binario sustituto compatible · `N2` motor alternativo HTTP · `N3` técnica a reimplementar · `N4` referencia para motor propio.
 
 ## Tabla resumen (verificada el 2026-11-28)
@@ -35,14 +35,15 @@
 | 19 | **vLLM** | [vllm-project/vllm](https://github.com/vllm-project/vllm) | Apache-2.0 | No (WSL2) / Sí | No | Plugin exp. | N3 | **F3** (PagedAttention) |
 | 20 | **ExLlamaV2** | [turboderp-org/exllamav2](https://github.com/turboderp-org/exllamav2) | MIT | Sí / Sí | No | No (EXL2) | — | Descartar *(archivado)* |
 | 20b | **ExLlamaV3** | [turboderp-org/exllamav3](https://github.com/turboderp-org/exllamav3) | MIT | Sí / Sí | No (CUDA/ROCm) | No (EXL3) | N3 | **F3** (KV 2–8b, MoE) |
-| 21 | **Strata** + **RustingStrata** | [Niko1221/Strata](https://github.com/Niko1221/Strata) · [RustingStudio/RustingStrata](https://github.com/RustingStudio/RustingStrata) | `?` | Sí / Sí | **Sí** (RustingStrata) | **Sí** | N2 / N3 | **F1b (emergente)** |
+| 21a | **Strata** | [Niko1221/Strata](https://github.com/Niko1221/Strata) | MIT | Sí / Sí | No (CUDA/HIP/SYCL) | Parcial (catálogo) | N2 (GPU ded.) + N3 | **F4 (GPU CUDA/HIP)** + F3 |
+| 21b | **RustingStrata** | [RustingStudio/RustingStrata](https://github.com/RustingStudio/RustingStrata) | **No-OSI** (`RustingStrata 1.0`)* | Sí / Sí | **Sí** *(no Arc)* | **Sí** | N2 externo + N3 | **F4 (Vulkan/CUDA)** + F3 |
 | 22 | **BeeLLama** | [Anbeeld/beellama.cpp](https://github.com/Anbeeld/beellama.cpp) | `?` | `?` | No (CUDA) | Sí | N3 | Seguimiento ([01b](01b_agregador_y_manual.md)) |
 | 23 | **PrismML** (`llama.cpp` fork) | [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) | `?` | Sí / Sí | `?` | Ternario | N3 | Seguimiento ([01b](01b_agregador_y_manual.md)) |
-| 24 | **DFlash2** | [z-lab/dflash](https://github.com/z-lab/dflash) | `?` | — | — | Drafter | N0 / N3 | **F3 (técnica clave)** |
+| 24 | **DFlash2** | [z-lab/dflash](https://github.com/z-lab/dflash) | MIT | — | — | Drafter | N0 / N3 | **F3 + F2/F4 vía `llama.cpp`** |
 | 25 | Kipp, Synapse, TensorFold, Basalt, Hibana, ReVolta, Radiance, Infernix | Todos verificados existentes (ver [01b](01b_agregador_y_manual.md)) | Varios | Varios | Solo algunos forks | Varios | C | Seguimiento ([01b](01b_agregador_y_manual.md)) |
 
-> \* **Ghost Infer:** el código fuente es dual Apache-2.0/MIT, pero su instalador Windows empaqueta NVIDIA NVRTC bajo licencia privativa CUDA Toolkit EULA (incompatible con redistribución combinada bajo GPL-3.0).  
-> **Hallazgo transversal clave de F1:** fuera de `llama.cpp`, casi ningún motor maduro soporta **Windows + Linux + Vulkan (APU/iGPU AMD e Intel) + GGUF + API OpenAI con tool calling**. Por eso **N0 (exprimir y actualizar `llama-server`)** y **N3 (importar técnicas)** cobran máxima prioridad, y los motores alternativos (N1/N2) quedan como aceleradores especializados por perfil de hardware (`OpenVINO GenAI` en Intel, `ik_llama.cpp`/`mistral.rs` en CPU/CUDA, `MLC`/`DynaLM`/`RustingStrata` en pruebas acotadas de Vulkan).
+> \* **Licencias no redistribuibles dentro del paquete GPL-3.0:** **Ghost Infer** tiene código Apache-2.0/MIT pero su instalador Windows empaqueta NVIDIA NVRTC bajo licencia privativa CUDA Toolkit EULA; **RustingStrata** usa la licencia *source-available* **RustingStrata License 1.0** (prohíbe revender/cobrar por el motor como servicio sustituto), incompatible con distribución combinada GPL-3.0 (solo uso externo no empaquetado).  
+> **Hallazgo transversal clave de F1 + Mini-F1b:** fuera de `llama.cpp`, casi ningún motor maduro soporta **Windows + Linux + Vulkan (APU/iGPU AMD e Intel) + GGUF + API OpenAI con tool calling**. `RustingStrata` sí cubre Windows + Linux + Vulkan + GGUF + OpenAI, pero exige `shaderFloat64` en Vulkan (**deja fuera Intel Arc**), su CPU-only es solo referencia lenta y su licencia prohíbe empaquetado comercial/GPL-3.0; `Strata` cubre Windows+Linux en GPU dedicada CUDA/HIP (incl. Strix Halo) pero sin Vulkan ni CPU-only. Por eso **N0 (exprimir y actualizar `llama-server`, incluyendo DFlash2/MTP)** y **N3 (importar técnicas)** siguen siendo la prioridad principal.
 
 ---
 
@@ -261,6 +262,46 @@
 - **ExLlamaV3 técnico:** Windows (exige PyTorch + `triton-windows`) y Linux; backends NVIDIA CUDA ≥12.4, **AMD ROCm/HIP (RDNA3+ `gfx1100+` `wave32`)** y offloading CPU AVX2/AVX-512 para MoE (**no CPU-only, no Vulkan**); formato propio **EXL3** (QTIP, sin GGUF); soporta Qwen3/3.5/3.8-Flash-Next; sin servidor HTTP propio (delega en TabbyAPI).
 - **Decisión F1:** ExLlamaV2 **descartar**; ExLlamaV3 **solo estudiar en F3** (caché KV 2–8 bits, QTIP/EXL3 y offloading MoE).
 
+### 21a. Strata (`Niko1221/Strata`) — *Mini-F1b*
+- **Repositorio / docs:** `https://github.com/Niko1221/Strata` · `docs/HOW_IT_WORKS.md`, `docs/MODELS.md`, `docs/AMD_HIP.md`, `docs/STRIX_HALO.md`.
+- **Licencia:** `MIT` (código base y app; los paquetes de motor `strata-engine`/`strata-inkling` incluyen avisos en `licenses/` y runtimes GPU específicos) · **Compatible GPL-3.0:** Código sí; para redistribución de motores binarios revisar `licenses/` de cada backend.
+- **Lenguaje / dependencias:** C++ + app desktop/terminal (`strata-control`). Descarga bajo demanda el paquete de motor para la GPU detectada (`strata-engine`, `strata-inkling`, `strata-hy4`).
+- **Actividad:** último push `2026-11-27`, release `v0.2.23` (`2026-11-27`), **48.788** estrellas.
+- **SO / distribución:** **Windows x64** (`setup.exe`, `.zip`, `install.ps1`), **Linux x64/aarch64** (`AppImage`, `.tar.gz`, `install.sh`, Docker) y macOS arm64.
+- **Backends:** NVIDIA CUDA 12/13 (RTX 20/30/40/50, DGX Spark), **AMD HIP/ROCm** (RDNA2/3/4, RX 9070, R9700, **Strix Halo**), Intel Arc SYCL (Linux) / opt-in Alchemist, Apple Metal. **Sin backend Vulkan ni modo CPU-only** (la CPU participa solo en expertos MoE híbridos y lectura de imagen).
+- **Formato de pesos:** Packs `.strata` (`SQ-10`/`SQ-15`/`SQ-20`), `GSQ-RCO IQ3_S` y **GGUF personalizado** (`--model-path`) para `Qwen3.8-Flash-Next`, `Qwen3.6-35B-A3B` e `Inkling-2-Mini`.
+- **Soporte Qwen3:** `Qwen3.8-Flash-Next`, `Qwen3.6-35B-A3B`, `Ornith-1.5-35B-A3B` (misma ruta de motor). Soporte de `Qwen3-4B`/`8B`/`30B-A3B` denso estándar en el catálogo: no destacado en portada (ver `docs/MODELS.md`).
+- **API de servidor:** Compatible OpenAI (`/v1/chat/completions`, `/v1/responses`, tool calls) y Anthropic (`/v1/messages`). `/tokenize`, `/embeddings`: existen issues/discusiones sobre paridad parcial (`?`).
+- **Técnicas clave:** **DFlash 2 drafter** integrado (0,55 GB extra, activo por defecto en RDNA2/3/4, Strix Halo, NVIDIA), caché dinámica de expertos MoE (VRAM/RAM/SSD), caché de conversación escalada a RAM (40 % de RAM libre hasta 128 GiB), `--turbo`/`--turbo-max` (saltar expertos débiles en capas tardías, cambia ligeramente la salida), `--tail-role-token`.
+- **Benchmarks publicados:** *Afirmaciones del autor* en release `v0.2.23` (Inkling 2 Mini SQ-20 v2, sin logs en README): RTX 5060 Ti 16 GB código `80,4 -> 260,7 t/s`; RTX 5060 8 GB `32,5–41,2 t/s`; R9700 código `140,3 t/s`; Strix Halo prefill 4K `1.528 t/s`.
+- **Encaje y riesgos:** **Nivel N2 (solo GPU dedicada CUDA/HIP)** + **N3** (DFlash 2 por defecto, caché de conversación escalada a RAM, `--turbo`). Riesgos: sin Vulkan ni CPU-only, catálogo centrado en MoE muy grandes y modos rápidos que alteran ligeramente los tokens.
+- **Decisión F1:** **Probar en F4 (perfil C/D NVIDIA CUDA o AMD HIP)** + **estudiar en F3**.
+
+### 21b. RustingStrata (`RustingStudio/RustingStrata`) — *Mini-F1b*
+- **Repositorio / docs:** `https://github.com/RustingStudio/RustingStrata` · `docs/MODELS.md`, `docs/BENCHMARKS.md`, `docs/USAGE.md`, `docs/CALIBRATION.md`.
+- **Licencia:** **RustingStrata License 1.0** (`LICENSE.md`, no-OSI, *source-available* de Vasyl Trefilov). Permite uso personal, investigación y uso comercial en aplicaciones/servicios con atribución (*"Uses RustingStrata by Vasyl Trefilov"*), pero **prohíbe vender, licenciar por pago o cobrar por el propio RustingStrata como motor sustituto**. · **Compatible GPL-3.0:** **No** para enlazar o redistribuir integrado dentro del paquete GPL-3.0 de GuarIdA (la Sección 2 añade una restricción incompatible con GPL-3.0); solo usable como herramienta externa descargada aparte por el usuario.
+- **Lenguaje / dependencias:** **Rust puro** (edición 2024, sin C++ ni `ggml`). CUDA usa `nvrtc` en runtime (sin él cae a Vulkan); Vulkan requiere driver 1.3; HIP usa `hiprtc` en runtime.
+- **Actividad:** último push `2026-11-27`, release `v1.4.2` (`2026-11-27`), **529** estrellas (muy activo).
+- **SO / distribución:** **Binarios oficiales** `rustingstrata-windows-x86_64.exe` y `rustingstrata-linux-x86_64` (instaladores `install.ps1`/`install.sh`, AUR `rustingstrata-bin`, o `cargo build --release`).
+- **Backends:** **CUDA** (Volta `sm_70`+; compilación JIT con NVRTC ~15 s la 1.ª vez), **Vulkan 1.3** (exige **`shaderFloat64`, `int8/16/64` y subgroup 32/64** — **el README advierte explícitamente que Intel Arc carece de `shaderFloat64`**), **HIP** (experimental), y **CPU** (referencia lenta para verificación; en modo híbrido MoE sí ejecuta expertos en paralelo en CPU).
+- **Formato de pesos:** **GGUF nativo** sin conversión (`Q4_K_M`, `UD-Q2_K_XL`, `UD-Q5_K_M`, etc.).
+- **Soporte Qwen3:** **Sí** — `Qwen3` (4B, etc.), `Qwen3-Next`, `Qwen3.5/3.6` (`35B-A3B`), `Qwen3.8-Flash-Next` (con soporte `--ple` para tabla n-gram).
+- **API de servidor:** Muy alineada con GuarIdA — OpenAI `/v1/chat/completions` (tool calls en streaming, `response_format` `json_object`/`json_schema`, **gramáticas GBNF**), Anthropic, **`POST /tokenize`**, `POST /detokenize`, `GET /props` y **`timings` estilo `llama-server`**.
+- **Técnicas clave:** **`rustingstrata calibrate`** (búsqueda con presupuesto de tiempo `--minutes M` para chunk, MTP drafts y umbrales), **TurboQuant KV cache** (`--kv turbo4`/`turbo3`/`turbo2` en CUDA y Vulkan), `STRATA_KV_HOST` (KV en RAM + atención en CPU), caché adaptativa de expertos MoE GPU+CPU+PCIe, prefetch desde disco en prompts largos, **DFlash2**, `--parallel N` batched serving con KV dinámica por slot.
+- **Benchmarks publicados:** *Afirmaciones del autor* (RTX 3060 12 GB + R5 7600X + 32 GB RAM, CUDA greedy tras 4K prompt vs `llama.cpp`): `Qwen3.6-35B-A3B UD-Q5_K_M` **80,5 vs 64,4 t/s** decode (`1530 vs 1120` prefill); `UD-Q2_K_XL` **113,4 vs 66,5 t/s** decode (`2216 vs ~2236` prefill); `Qwen3-4B Q4_K_M` `--parallel 64` **1694–1699 t/s** CUDA / **824–960 t/s** Vulkan. Incluye `tools/loadtest.py` y `tools/parity.py` contra `llama-server`.
+- **Encaje y riesgos:** **Nivel N2 externo (no empaquetable)** + **N3 altísimo** (`calibrate`, TurboQuant KV, colocación adaptativa de expertos en Vulkan/CUDA). Riesgos: licencia incompatible con redistribución GPL-3.0, **sin soporte Intel Arc en Vulkan** (`shaderFloat64`) y CPU-only lento.
+- **Decisión F1:** **Probar en F4 (exploratorio como binario externo en Vulkan AMD/NVIDIA y CUDA)** + **estudiar a fondo en F3**.
+
+### 24. DFlash2 (`z-lab/dflash`) — *Mini-F1b*
+- **Repositorio / docs:** `https://github.com/z-lab/dflash` · Paper DFlash (`arXiv:2602.06036`) · Blog DFlash 2 (`https://inco.ai/blog/dflash2/`).
+- **Licencia:** `MIT` (`z-lab/dflash`; verificar licencia de cada checkpoint drafter en HF `z-lab/dflash-2` / `z-lab/dflash`) · **Compatible GPL-3.0:** Sí (código MIT).
+- **Lenguaje / dependencias:** Python (`pip install dflash`, backends `transformers`, `mlx` o cliente `openai`). No es un motor standalone para GuarIdA; es el paquete de evaluación y colección de pesos *drafter* por difusión en bloques.
+- **Actividad:** último push `2026-08-18`, release `v0.1.0`, **6.268** estrellas.
+- **Soporte Qwen3 y motores compatibles:** Checkpoints **DFlash 2** para `Qwen3.8-27B`, `Muse-Glimmer-30B`; **DFlash** para `Qwen3` (`4B`/`8B` non-thinking, `Coder-Next`, `Coder-30B-A3B`), `Qwen3.5`, `Qwen3.6` (`27B`, `35B-A3B`), `Gemma 4`, etc. Integrado en **`llama.cpp` (PR #27342)**, `SGLang` (PR #35371), `vLLM` (PR #52816), `ik_llama.cpp`, `Strata`, `RustingStrata`, `OpenVINO GenAI` y `oMLX`.
+- **Técnicas clave:** Decodificación especulativa **sin pérdida** mediante modelo ligero de **difusión en bloques** (*parallel drafting*, verificando bloques en un solo paso del modelo objetivo; en MLX cuantizado recomienda `block_size <= 5`).
+- **Encaje y riesgos:** **Nivel N0 (vía `llama.cpp` actualizado) + N3**. Riesgo: exige un archivo drafter adicional (~0,55 GB según `Strata`) por modelo, y en GPUs rápidas o código/chat concreto puede no siempre acelerar (ver límites documentados en `Strata v0.2.23`).
+- **Decisión F1:** **Estudiar en F3** y **probar en F2/F4 integrado dentro de `llama.cpp` (`v1.0.0`+)**.
+
 ---
 
 ## Registro de afirmaciones verificadas (sin reproducir en GuarIdA)
@@ -280,6 +321,8 @@
 | `OpenSet-LLM` | `Bonsai-2-27B` ternario `PTQ1_0` + MTP: Ice Lake 8 cores / 8 GB (AVX-512, 4k ctx) `16,99–19,67 t/s`; Zen 5 `35–36 t/s`; **AVX2 sin AVX-512 `5,8–7,2 t/s`** (`7,2–8,7` `--spec`); **16k ctx 8 GB `7,98 t/s`** | `opensetlabs/openset-llm` README (`Numbers`, `CPUs without AVX-512`) | Parcial (`bench/quick.sh`; sesión de agente no publicada) |
 | `KTransformers` | DeepSeek-R1 FP8 en 8×L20: `227,85` total / `87,58 t/s` output; SFT Qwen3-30B-A3B 1×4090 `8+ it/s` | `kvcache-ai/ktransformers` README | No |
 | `Megakernel Zoo` | Qwen3-8B en 1×H100 (`ctx <= 2048`, batch 1): Track A `5,13 ms/tok`, Track B `3,83 ms/tok` vs SGLang `6,09 ms/tok` | `dangxingyu/megakernel-zoo` README (`Benchmarks`) | Sí (infraestructura + `runs/` en repo; exige H100/B200) |
+| `Strata` | `v0.2.23`, Inkling 2 Mini SQ-20 v2: RTX 5060 Ti 16 GB código `80,4 -> 260,7 t/s`; RTX 5060 8 GB `32,5–41,2 t/s`; R9700 código `140,3 t/s`; Strix Halo prefill 4K `1.528 t/s` | `Niko1221/Strata` release `v0.2.23` (`Speed`) | No (sin logs en releases/README) |
+| `RustingStrata` | RTX 3060 12 GB + R5 7600X + 32 GB RAM, CUDA greedy tras 4K prompt vs `llama.cpp`: `Qwen3.6-35B-A3B` `UD-Q5_K_M` `80,5 vs 64,4 t/s` (`1530 vs 1120` pp); `UD-Q2_K_XL` `113,4 vs 66,5 t/s`; `Qwen3-4B Q4_K_M` `--parallel 64` `824–960 t/s` en Vulkan | `RustingStudio/RustingStrata` README (`Numbers`) y release `v1.4.0` | Parcial (incluye `tools/parity.py` y `tools/loadtest.py`; `docs/BENCHMARKS.md` no descargado) |
 
 ---
 

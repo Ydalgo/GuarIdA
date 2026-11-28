@@ -17,8 +17,8 @@ Los perfiles A y B son el público principal de GuarIdA; C y D sirven para no di
 | Perfil | Hardware tipo | Modelos | Candidatos verificados en F1 |
 |---|---|---|---|
 | **A · CPU modesta** | ≤32 GB RAM, sin GPU dedicada (Windows 11 y Linux) | Qwen3-0.6B, Qwen3-4B | `llama.cpp`, `ik_llama.cpp` (compilar), `mistral.rs`, `OpenVINO GenAI`, `DynaLM` (exploratorio) |
-| **B · APU / iGPU** | 32–64 GB RAM compartida, AMD APU o Intel iGPU (Vulkan / GTT) | Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B si cabe | `llama.cpp` Vulkan, `OpenVINO GenAI` (solo Intel iGPU/NPU), `MLC LLM` Vulkan (acotado, sin CPU), `DynaLM` Vulkan (exploratorio) |
-| **C · GPU media** | 8–16 GB VRAM (NVIDIA o AMD) + 32–64 GB RAM | Qwen3-8B, Qwen3-30B-A3B (o Qwen3.6-35B-A3B) | `llama.cpp` (`-ot`/`--n-cpu-moe`), `ik_llama.cpp` (CUDA), `mistral.rs` (Linux CUDA `sm80+`), `MLC LLM` Vulkan; *(pendiente F1b: `Strata`/`RustingStrata`)* |
+| **B · APU / iGPU** | 32–64 GB RAM compartida, AMD APU o Intel iGPU (Vulkan / GTT) | Qwen3-4B, Qwen3-8B, Qwen3-30B-A3B si cabe | `llama.cpp` Vulkan, `OpenVINO GenAI` (solo Intel iGPU/NPU), `MLC LLM` Vulkan (acotado, sin CPU), `DynaLM` Vulkan (exploratorio), `RustingStrata` Vulkan (solo AMD, sin Intel Arc; binario externo) |
+| **C · GPU media** | 8–16 GB VRAM (NVIDIA o AMD) + 32–64 GB RAM | Qwen3-8B, Qwen3-30B-A3B (o Qwen3.6-35B-A3B) | `llama.cpp` (`-ot`/`--n-cpu-moe`), `ik_llama.cpp` (CUDA), `mistral.rs` (Linux CUDA `sm80+`), `MLC LLM` Vulkan, `Strata` (CUDA/HIP), `RustingStrata` (Vulkan/CUDA; binario externo) |
 | **D · GPU potente** | ≥16 GB VRAM + ≥64 GB RAM | Qwen3-30B-A3B (y BF16 si cabe) | `llama.cpp`, `ik_llama.cpp` (CUDA), `mistral.rs` (Linux CUDA `sm80+`) |
 
 Para cada equipo se guarda la ficha de hardware que ya genera GuarIdA (`hash_hardware`, CPU, núcleos/hilos, extensiones SIMD, RAM y velocidad, GPU, VRAM/GTT, SO, versión del controlador) más la versión o commit exacto de cada motor.

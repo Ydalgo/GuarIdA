@@ -29,7 +29,7 @@
 
 **Conclusiones del agregador para GuarIdA:**
 1. En hardware doméstico heterogéneo (AMD Radeon 780M/890M/8060S, Intel Arc iGPU/dGPU, GPUs 8–16 GB en Windows y Linux), **`llama.cpp` con Vulkan** sigue siendo la base más portátil, y sus mayores aceleraciones provienen de **MTP / DFlash2** y **KV cuantizada `q8_0`**.
-2. Para **MoE que exceden la VRAM**, aparece un hallazgo que conviene vigilar (**candidato F1b**): **`Strata`** (`Niko1221/Strata`, Windows+Linux) y sobre todo **`RustingStrata`** (`RustingStudio/RustingStrata`, Rust puro con **Vulkan + CUDA** y GGUF).
+2. Para **MoE que exceden la VRAM**, las fichas verificadas en Mini-F1b muestran dos rutas distintas: **`Strata`** ([ficha](01_inventario_candidatos.md#21a-strata-niko1221strata--mini-f1b), MIT, Windows+Linux, CUDA/HIP sin Vulkan) y **`RustingStrata`** ([ficha](01_inventario_candidatos.md#21b-rustingstrata-rustingstudiorustingstrata--mini-f1b), Rust + **Vulkan** + CUDA + GGUF, aunque sin soporte Intel Arc por `shaderFloat64` y bajo licencia *source-available* incompatible con redistribución GPL-3.0).
 
 ---
 
@@ -39,8 +39,8 @@
 
 | Proyecto | URL real verificada | Descripción y encaje para GuarIdA |
 |---|---|---|
-| **Strata** *(404 en `StrataEngine/Strata`)* | <https://github.com/Niko1221/Strata> + variante Vulkan <https://github.com/RustingStudio/RustingStrata> | Motor Windows+Linux con caché dinámica de expertos MoE (VRAM/RAM/SSD); `RustingStrata` añade Vulkan+CUDA en Rust. **Candidato emergente F1b.** |
-| **DFlash2** | <https://github.com/z-lab/dflash> · pesos en <https://huggingface.co/z-lab> | Decodificación especulativa **sin pérdida** por difusión en bloques, integrada en `llama.cpp`, `ik_llama.cpp`, `OpenVINO GenAI`, `Strata`, `vLLM` y `SGLang`. **Clave para F3 y N0.** |
+| **Strata** *(404 en `StrataEngine/Strata`)* | <https://github.com/Niko1221/Strata> + variante Vulkan <https://github.com/RustingStudio/RustingStrata> | Motor Windows+Linux con caché dinámica de expertos MoE (`MIT`, CUDA/HIP sin Vulkan); `RustingStrata` añade Vulkan+CUDA+GGUF en Rust (`RustingStrata 1.0`, sin Intel Arc). **Verificados en Mini-F1b** ([fichas](01_inventario_candidatos.md#21a-strata-niko1221strata--mini-f1b)). |
+| **DFlash2** | <https://github.com/z-lab/dflash> · pesos en <https://huggingface.co/z-lab> | Decodificación especulativa **sin pérdida** por difusión en bloques (`MIT`), integrado en `llama.cpp` (PR #27342), `ik_llama.cpp`, `OpenVINO GenAI`, `Strata`, `RustingStrata`, `vLLM` y `SGLang`. **Verificado en Mini-F1b** ([ficha](01_inventario_candidatos.md#24-dflash2-z-labdflash--mini-f1b)). |
 | **PrismML** *(0 repos en `github.com/PrismML`)* | <https://github.com/PrismML-Eng/llama.cpp> · <https://huggingface.co/prism-ml> | Fork `llama.cpp` y modelos ternarios (`PTQ1_0`/`PQ2_0`, familia Bonsai). Seguimiento F3. |
 | **BeeLLama** *(404 en `BeeLLM/BeeLLama`)* | <https://github.com/Anbeeld/beellama.cpp> | Fork de `llama.cpp` (principalmente CUDA) con KV `KVarN` y DFlash (`BeeLLama-Low`). Seguimiento. |
 | **Kipp** | <https://github.com/Polished-Snow/Kipp> | Motor Qwen/Qwen3 en C11 sin dependencias externas (HTTP/JSON propios). Solo curiosidad/estudio. |
